@@ -69,7 +69,7 @@ Each function is responsible for a single step, logs exactly what it is attempti
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/sat-descarga-masiva.git
+git clone https://github.com/cvaldezscse/taxcrawler-dm.git
 cd sat-descarga-masiva
 
 # Install the only dependency
