@@ -222,4 +222,4 @@ This tool consumes the SAT's official Web Service directly. It is your responsib
 
 ## License
 
-MIT
+GNU GPLv3
