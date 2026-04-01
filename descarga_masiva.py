@@ -22,10 +22,17 @@ Opcionales:
   --intervalo  60             segundos entre verificaciones (default: 60)
 """
 
+import sys
+from pathlib import Path
+
+# Dependencias instaladas localmente con: pip install cfdiclient --target ./libs
+_libs = Path(__file__).resolve().parent / "libs"
+if _libs.exists() and str(_libs) not in sys.path:
+    sys.path.insert(0, str(_libs))
+
 import argparse
 import base64
 import logging
-import sys
 import time
 import zipfile
 from datetime import date, datetime
@@ -36,7 +43,8 @@ from cfdiclient import (
     Autenticacion,
     DescargaMasiva,
     Fiel,
-    SolicitaDescarga,
+    SolicitaDescargaEmitidos,
+    SolicitaDescargaRecibidos,
     VerificaSolicitudDescarga,
 )
 
@@ -249,20 +257,37 @@ def solicitar_descarga(fiel: Fiel, token: str, p: dict) -> str:
     log.info(f"  Período    : {p['inicio']} → {p['fin']}")
     log.info("  Enviando solicitud al Web Service del SAT...")
 
-    kwargs = dict(
-        token          = token,
-        rfc            = p["rfc"],
-        fecha_inicial  = p["inicio"],
-        fecha_final    = p["fin"],
-        tipo_solicitud = p["solicitud"],
-    )
-    if p["tipo"] == "emitidos":
-        kwargs["rfc_emisor"]   = p["rfc"]
-    else:
-        kwargs["rfc_receptor"] = p["rfc"]
-
     try:
-        resultado    = SolicitaDescarga(fiel).solicitar_descarga(**kwargs)
+        if p["tipo"] == "emitidos":
+            cliente = SolicitaDescargaEmitidos(fiel)
+        else:
+            cliente = SolicitaDescargaRecibidos(fiel)
+
+        if p["tipo"] == "emitidos":
+            resultado = cliente.solicitar_descarga(
+                token,
+                p["rfc"],
+                p["inicio"],
+                p["fin"],
+                rfc_emisor=p["rfc"],
+                tipo_solicitud=p["solicitud"],
+            )
+        else:
+            resultado = cliente.solicitar_descarga(
+                token,
+                p["rfc"],
+                p["inicio"],
+                p["fin"],
+                rfc_receptor=p["rfc"],
+                tipo_solicitud=p["solicitud"],
+            )
+
+        if resultado.get("cod_estatus") != "5000" and resultado.get("id_solicitud") is None:
+            log.error(f"✗ El SAT rechazó la solicitud.")
+            log.error(f"  Código : {resultado.get('cod_estatus')}")
+            log.error(f"  Mensaje: {resultado.get('mensaje')}")
+            sys.exit(1)
+
         id_solicitud = resultado["id_solicitud"]
         log.info("✔ Solicitud aceptada por el SAT.")
         log.info(f"  ID de solicitud : {id_solicitud}")
@@ -308,9 +333,10 @@ def verificar_solicitud(fiel: Fiel, id_solicitud: str, p: dict) -> list[str]:
             time.sleep(p["intervalo"])
             continue
 
-        estado      = verificacion.get("estado_solicitud", -1)
+        log.info(f"  Respuesta raw del SAT: {verificacion}")
+        estado      = int(verificacion.get("estado_solicitud", -1))
         estado_desc = ESTADOS_SOLICITUD.get(estado, f"Desconocido ({estado})")
-        paquetes    = verificacion.get("paquetes", [])
+        paquetes    = verificacion.get("paquetes", []) or []
 
         log.info(f"  Estado actual : {estado} — {estado_desc}")
 
@@ -446,7 +472,7 @@ def parse_args() -> dict | None:
     p.add_argument("--rfc",       required=True)
     p.add_argument("--cer",       required=True, type=Path)
     p.add_argument("--key",       required=True, type=Path)
-    p.add_argument("--password",  required=True)
+    p.add_argument("--password",  required=False, default=None, help="Contrasena FIEL. Si se omite, se pedira de forma segura (recomendado para contrasenas con espacios).")
     p.add_argument("--inicio",    required=True, type=date.fromisoformat)
     p.add_argument("--fin",       required=True, type=date.fromisoformat)
     p.add_argument("--tipo",      choices=["emitidos", "recibidos"], default="recibidos")
@@ -455,11 +481,16 @@ def parse_args() -> dict | None:
     p.add_argument("--intervalo", type=int,  default=60)
     args = p.parse_args()
 
+    password = args.password
+    if not password:
+        log.info("--password no proporcionado. Solicitando de forma segura (recomendado para contrasenas con espacios)...")
+        password = getpass("  → Contraseña de la FIEL (oculta): ")
+
     return {
         "rfc":       args.rfc.upper(),
         "cer":       args.cer,
         "key":       args.key,
-        "password":  args.password,
+        "password":  password,
         "inicio":    args.inicio,
         "fin":       args.fin,
         "tipo":      args.tipo,
