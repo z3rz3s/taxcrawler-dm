@@ -339,5 +339,8 @@ $RECYCLE.BIN/
 *.cer
 *.key
 libs/
+results_*/
+.env
+.cache/
 
 # End of https://www.toptal.com/developers/gitignore/api/windows,linux,macos,python,pycharm+all

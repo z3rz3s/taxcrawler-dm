@@ -1,50 +1,76 @@
 """
 SAT Descarga Masiva de CFDI (XML)
 ==================================
-Requiere: 
-    pip install cfdiclient --target ./libs
-    pip install openpyxl --target ./libs --break-system-packages
+Requiere:
+  pip install cfdiclient openpyxl python-dotenv --target ./libs
+ 
+Setup inicial:
+  cp .env.example .env
+  # Editar .env y definir SAT_CACHE_SALT
  
 Modo interactivo (sin argumentos):
   python sat_descarga_masiva.py
  
-Modo CLI:
+Modo CLI — descarga:
   python sat_descarga_masiva.py \
     --rfc TURF010101ABC \
     --cer fiel.cer \
     --key fiel.key \
-    --password "mi password" \
     --inicio 2024-01-01 \
     --fin 2024-12-31 \
     --tipo recibidos \
-    --solicitud Metadata \
-    --output ./xml_sat
+    --solicitud Metadata
+ 
+Modo utilidad — revelar caché:
+  python sat_descarga_masiva.py --reveal-cache TURF010101ABC
+  python sat_descarga_masiva.py --reveal-cache all
  
 Opcionales:
-  --solicitud  CFDI|Metadata  (default: CFDI)
-  --intervalo  60             segundos entre verificaciones (default: 60)
+  --solicitud  CFDI|Metadata            (default: CFDI)
+  --excel      resumen|detalle|completo (solo con CFDI)
+  --intervalo  60                       segundos entre verificaciones
+  --output     ruta                     carpeta base (default: ./results_RFC)
  
-Comportamiento según --solicitud:
-  Metadata → divide por mes automáticamente, continúa si un mes no tiene CFDIs
-  CFDI     → respeta el rango completo sin dividir (para no gastar los 2 intentos por período)
+Estructura de salida:
+  results_RFC/
+  └── YYYY-MM-DD/
+      ├── YYYY-MM-RFC.txt    (Metadata — ZIP borrado tras extraer)
+      ├── YYYY-MM-RFC.zip    (CFDI — renombrado, conservado)
+      └── YYYY-MM-RFC/       (CFDI — XMLs extraídos)
+ 
+  .cache/
+  └── VAVC930829LJ1.enc      (historial encriptado por RFC)
 """
  
 import sys
 from pathlib import Path
  
-# Dependencias instaladas localmente con: pip install cfdiclient --target ./libs
+# ---------------------------------------------------------------------------
+# Dependencias locales — libs/ tiene prioridad sobre el sistema
+# ---------------------------------------------------------------------------
 _libs = Path(__file__).resolve().parent / "libs"
 if _libs.exists() and str(_libs) not in sys.path:
     sys.path.insert(0, str(_libs))
  
 import argparse
 import base64
+import json
 import logging
+import os
 import time
 import zipfile
 from calendar import monthrange
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from getpass import getpass
+ 
+# ---------------------------------------------------------------------------
+# Cargar .env antes que cualquier otra cosa
+# ---------------------------------------------------------------------------
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # Si no está instalado, se usarán variables de entorno del sistema
  
 from cfdiclient import (
     Autenticacion,
@@ -81,18 +107,212 @@ ESTADOS_SOLICITUD = {
     6: "Vencida",
 }
  
+MESES_ES = {
+    "01": "Enero",      "02": "Febrero",   "03": "Marzo",
+    "04": "Abril",      "05": "Mayo",      "06": "Junio",
+    "07": "Julio",      "08": "Agosto",    "09": "Septiembre",
+    "10": "Octubre",    "11": "Noviembre", "12": "Diciembre",
+}
+ 
 MAX_REINTENTOS_TOKEN    = 3
 MAX_REINTENTOS_DESCARGA = 3
-PAUSA_ENTRE_REINTENTOS  = 5  # segundos
+PAUSA_ENTRE_REINTENTOS  = 5
+CACHE_DIR               = Path(__file__).resolve().parent / ".cache"
  
  
-# ---------------------------------------------------------------------------
-# Modo interactivo
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# CACHÉ ENCRIPTADO — Fernet + PBKDF2 + SAT_CACHE_SALT desde .env
+# ===========================================================================
+ 
+def _validar_salt() -> bytes:
+    """
+    Lee SAT_CACHE_SALT del entorno. Falla con instrucciones claras si no existe.
+    El salt nunca se guarda en código — viene de .env o variable de entorno.
+    """
+    salt = os.environ.get("SAT_CACHE_SALT", "").strip()
+    if not salt:
+        log.error("=" * 65)
+        log.error("Variable de entorno SAT_CACHE_SALT no definida.")
+        log.error("Pasos para configurarla:")
+        log.error("  1. Copia .env.example → .env")
+        log.error("  2. Define SAT_CACHE_SALT=tu_valor_secreto en .env")
+        log.error("  3. Asegúrate de que .env esté en .gitignore")
+        log.error("=" * 65)
+        sys.exit(1)
+    return salt.encode()
+ 
+ 
+def _derivar_clave_fernet(rfc: str) -> bytes:
+    """
+    Deriva una clave Fernet única por RFC usando PBKDF2-SHA256 + SAT_CACHE_SALT.
+    La clave no se almacena — se recalcula en cada operación.
+    """
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.primitives import hashes
+ 
+    salt = _validar_salt()
+    kdf  = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100_000,
+    )
+    return base64.urlsafe_b64encode(kdf.derive(rfc.upper().encode()))
+ 
+ 
+def _cache_path(rfc: str) -> Path:
+    return CACHE_DIR / f"{rfc.upper()}.enc"
+ 
+ 
+def _leer_cache(rfc: str) -> dict:
+    """
+    Lee y descifra el historial del RFC desde .cache/RFC.enc.
+    Retorna dict vacío si no existe o está corrupto.
+    """
+    from cryptography.fernet import Fernet, InvalidToken
+ 
+    ruta = _cache_path(rfc)
+    if not ruta.exists():
+        return {}
+ 
+    try:
+        clave   = _derivar_clave_fernet(rfc)
+        f       = Fernet(clave)
+        datos   = f.decrypt(ruta.read_bytes())
+        return json.loads(datos.decode())
+    except InvalidToken:
+        log.warning(f"  ⚠ Caché de {rfc} corrupto o modificado manualmente — se reiniciará.")
+        return {}
+    except Exception as e:
+        log.warning(f"  ⚠ No se pudo leer el caché de {rfc}. Causa: {e}")
+        return {}
+ 
+ 
+def _escribir_cache(rfc: str, datos: dict) -> None:
+    """
+    Cifra y guarda el historial del RFC en .cache/RFC.enc.
+    """
+    from cryptography.fernet import Fernet
+ 
+    CACHE_DIR.mkdir(exist_ok=True)
+    try:
+        clave  = _derivar_clave_fernet(rfc)
+        f      = Fernet(clave)
+        cifrado = f.encrypt(json.dumps(datos, ensure_ascii=False).encode())
+        _cache_path(rfc).write_bytes(cifrado)
+    except Exception as e:
+        log.warning(f"  ⚠ No se pudo guardar el caché de {rfc}. Causa: {e}")
+ 
+ 
+def _clave_periodo(inicio: date, fin: date, tipo: str) -> str:
+    """Genera la clave única de un período para el historial."""
+    return f"{inicio}|{fin}|{tipo}"
+ 
+ 
+def consultar_historial(rfc: str, inicio: date, fin: date, tipo: str) -> dict:
+    """
+    Retorna el registro del historial para un período específico.
+    Si no existe, retorna un dict con valores iniciales.
+    """
+    cache  = _leer_cache(rfc)
+    clave  = _clave_periodo(inicio, fin, tipo)
+    return cache.get(clave, {"intentos": 0, "offset_segundos": 0, "ultimo": None})
+ 
+ 
+def registrar_intento(rfc: str, inicio: date, fin: date, tipo: str) -> int:
+    """
+    Registra un nuevo intento en el historial y retorna el offset de segundos
+    que debe usarse en esta solicitud para evitar duplicados exactos.
+    Incrementa el offset en 1 segundo por cada intento.
+    """
+    cache  = _leer_cache(rfc)
+    clave  = _clave_periodo(inicio, fin, tipo)
+    actual = cache.get(clave, {"intentos": 0, "offset_segundos": 0, "ultimo": None})
+ 
+    nuevo_offset  = actual["intentos"]  # intento 0→offset 0, intento 1→offset 1, etc.
+    actual["intentos"]        += 1
+    actual["offset_segundos"]  = nuevo_offset
+    actual["ultimo"]           = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+ 
+    cache[clave] = actual
+    _escribir_cache(rfc, cache)
+    return nuevo_offset
+ 
+ 
+def fechas_con_offset(inicio: date, fin: date, offset_seg: int) -> tuple[datetime, datetime]:
+    """
+    Convierte date a datetime aplicando el offset de segundos al inicio.
+    Esto hace que cada solicitud al SAT sea técnicamente un período distinto,
+    evitando el bloqueo permanente por solicitudes duplicadas (error 5002).
+ 
+    Ejemplo:
+      offset 0 → 2025-01-01 00:00:00 → 2025-01-31 23:59:59
+      offset 1 → 2025-01-01 00:00:01 → 2025-01-31 23:59:59
+      offset 2 → 2025-01-01 00:00:02 → 2025-01-31 23:59:59
+    """
+    dt_inicio = datetime(inicio.year, inicio.month, inicio.day, 0, 0, 0) + timedelta(seconds=offset_seg)
+    dt_fin    = datetime(fin.year, fin.month, fin.day, 23, 59, 59)
+    return dt_inicio, dt_fin
+ 
+ 
+# ===========================================================================
+# REVEAL CACHE — utilidad de consola para inspeccionar el historial
+# ===========================================================================
+ 
+def reveal_cache(rfc_target: str) -> None:
+    """
+    Descifra y muestra el historial de solicitudes de un RFC o de todos.
+    Modo de utilidad — no requiere FIEL ni parámetros de descarga.
+    """
+    _validar_salt()  # Verificar que el entorno esté configurado
+ 
+    if not CACHE_DIR.exists() or not any(CACHE_DIR.glob("*.enc")):
+        log.info("No existe caché todavía. Aún no se ha ejecutado ninguna descarga CFDI.")
+        return
+ 
+    archivos = list(CACHE_DIR.glob("*.enc")) if rfc_target == "all" \
+               else [_cache_path(rfc_target)]
+ 
+    for archivo in archivos:
+        rfc = archivo.stem
+        log.info("")
+        log.info("=" * 65)
+        log.info(f"CACHÉ DESCIFRADO — {rfc}")
+        log.info("=" * 65)
+ 
+        cache = _leer_cache(rfc)
+ 
+        if not cache:
+            log.info("  Sin registros en el caché para este RFC.")
+            continue
+ 
+        for clave, info in sorted(cache.items()):
+            try:
+                inicio_str, fin_str, tipo = clave.split("|")
+            except ValueError:
+                continue
+ 
+            intentos = info.get("intentos", 0)
+            offset   = info.get("offset_segundos", 0)
+            ultimo   = info.get("ultimo", "—")
+ 
+            log.info(f"  Período  : {inicio_str} → {fin_str} ({tipo})")
+            log.info(f"  Intentos : {intentos}")
+            log.info(f"  Último   : {ultimo}")
+            log.info(f"  Próximo offset : +{offset}s → inicio efectivo {inicio_str} 00:00:{offset:02d}")
+            log.info("")
+ 
+    log.info("=" * 65)
+ 
+ 
+# ===========================================================================
+# PARÁMETROS
+# ===========================================================================
+ 
 def preguntar_parametros() -> dict:
     """
-    Solicita al usuario los parámetros de forma interactiva.
-    Se usa cuando el script se ejecuta sin argumentos CLI.
+    Solicita los parámetros de forma interactiva.
+    Valida rutas en tiempo real y oculta la contraseña.
     """
     log.info("=" * 65)
     log.info("MODO INTERACTIVO — Se solicitarán los parámetros necesarios")
@@ -102,7 +322,7 @@ def preguntar_parametros() -> dict:
     def pedir(prompt: str, requerido: bool = True, default: str = "") -> str:
         while True:
             sufijo = f" [{default}]" if default else ""
-            valor = input(f"  → {prompt}{sufijo}: ").strip()
+            valor  = input(f"  → {prompt}{sufijo}: ").strip()
             if not valor and default:
                 return default
             if valor or not requerido:
@@ -113,12 +333,12 @@ def preguntar_parametros() -> dict:
  
     cer = pedir("Ruta al archivo .cer de la FIEL")
     while not Path(cer).exists():
-        print(f"    ✗ No se encontró el archivo: {cer}")
+        print(f"    ✗ No se encontró: {cer}")
         cer = pedir("Ruta al archivo .cer de la FIEL")
  
     key = pedir("Ruta al archivo .key de la FIEL")
     while not Path(key).exists():
-        print(f"    ✗ No se encontró el archivo: {key}")
+        print(f"    ✗ No se encontró: {key}")
         key = pedir("Ruta al archivo .key de la FIEL")
  
     password = getpass("  → Contraseña de la FIEL (oculta): ")
@@ -128,19 +348,23 @@ def preguntar_parametros() -> dict:
  
     tipo = ""
     while tipo not in ("emitidos", "recibidos"):
-        tipo = pedir("Tipo de descarga [emitidos / recibidos]", default="recibidos").lower()
+        tipo = pedir("Tipo [emitidos / recibidos]", default="recibidos").lower()
  
     solicitud = ""
     while solicitud not in ("CFDI", "Metadata"):
         solicitud = pedir("Tipo de solicitud [CFDI / Metadata]", default="CFDI")
  
-    output    = pedir("Carpeta de salida (Enter para usar ./results_{RFC})", requerido=False, default="")
+    excel = ""
+    if solicitud == "CFDI":
+        while excel not in ("resumen", "detalle", "completo", ""):
+            excel = pedir("Excel [resumen / detalle / completo] (Enter para omitir)",
+                          requerido=False, default="").lower()
+ 
+    output    = pedir(f"Carpeta base (Enter para usar ./results_{rfc})", requerido=False, default="")
     intervalo = pedir("Segundos entre verificaciones", default="60")
  
     print()
     log.info("Parámetros capturados correctamente.")
- 
-    output_path = Path(output) if output else Path(f"./results_{rfc}")
  
     return {
         "rfc":       rfc,
@@ -151,18 +375,16 @@ def preguntar_parametros() -> dict:
         "fin":       date.fromisoformat(fin),
         "tipo":      tipo,
         "solicitud": solicitud,
-        "output":    output_path,
+        "excel":     excel or None,
+        "output":    Path(output) if output else Path(f"./results_{rfc}"),
         "intervalo": int(intervalo),
     }
  
  
-# ---------------------------------------------------------------------------
-# Validaciones — fail-fast antes de tocar el SAT
-# ---------------------------------------------------------------------------
 def validar_parametros(p: dict) -> None:
     """
-    Valida todos los parámetros antes de hacer cualquier llamada al SAT.
-    Si hay errores los lista todos y sale — no gasta solicitudes con datos inválidos.
+    Valida todos los parámetros antes de tocar el SAT.
+    Lista todos los errores y sale — fail-fast.
     """
     log.info("Validando parámetros antes de iniciar el proceso...")
  
@@ -190,6 +412,9 @@ def validar_parametros(p: dict) -> None:
     if p["intervalo"] < 10:
         errores.append("El intervalo de verificación debe ser al menos 10 segundos.")
  
+    if p.get("excel") and p["solicitud"] != "CFDI":
+        errores.append("--excel solo está disponible en modo --solicitud CFDI.")
+ 
     if errores:
         log.error(f"Se encontraron {len(errores)} error(es) de validación:")
         for e in errores:
@@ -199,9 +424,29 @@ def validar_parametros(p: dict) -> None:
     log.info("✔ Todos los parámetros son válidos.")
  
  
-# ---------------------------------------------------------------------------
-# Paso 1 — Cargar FIEL
-# ---------------------------------------------------------------------------
+def resolver_output(params: dict) -> Path:
+    """
+    Crea la estructura results_RFC/YYYY-MM-DD/.
+    Advierte si la carpeta del día ya existe (sobreescritura silenciosa).
+    """
+    modo      = "metadata" if params["solicitud"] == "Metadata" else "cfdi"
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    carpeta   = params["output"] / modo / fecha_hoy
+ 
+    if carpeta.exists():
+        log.warning(f"La carpeta de hoy ya existe: {carpeta.resolve()}")
+        log.warning("  Los archivos existentes serán sobreescritos silenciosamente.")
+    else:
+        carpeta.mkdir(parents=True, exist_ok=True)
+        log.info(f"Carpeta de salida creada: {carpeta.resolve()}")
+ 
+    return carpeta
+ 
+ 
+# ===========================================================================
+# FIEL Y TOKEN
+# ===========================================================================
+ 
 def cargar_fiel(cer: Path, key: Path, password: str) -> Fiel:
     """
     Carga los archivos de la FIEL y construye el objeto Fiel.
@@ -222,23 +467,19 @@ def cargar_fiel(cer: Path, key: Path, password: str) -> Fiel:
         sys.exit(1)
  
  
-# ---------------------------------------------------------------------------
-# Paso 2 — Obtener token SAT
-# ---------------------------------------------------------------------------
 def obtener_token(fiel: Fiel, intento: int = 1) -> str:
     """
-    Autentica contra el Web Service del SAT y obtiene un token temporal.
-    El token dura ~5 minutos — se renueva antes de cada operación.
+    Autentica contra el SAT y obtiene un token temporal (~5 min).
     Reintenta automáticamente hasta MAX_REINTENTOS_TOKEN veces.
     """
     log.info(f"Solicitando token de autenticación al SAT (intento {intento}/{MAX_REINTENTOS_TOKEN})...")
  
     try:
         token = Autenticacion(fiel).obtener_token()
-        log.info("✔ Token obtenido. La sesión con el SAT está activa.")
+        log.info("✔ Token obtenido. Sesión activa con el SAT.")
         return token
     except Exception as e:
-        log.warning(f"  ✗ El SAT no respondió la autenticación. Causa: {e}")
+        log.warning(f"  ✗ El SAT no respondió. Causa: {e}")
         if intento < MAX_REINTENTOS_TOKEN:
             log.info(f"  Reintentando en {PAUSA_ENTRE_REINTENTOS}s...")
             time.sleep(PAUSA_ENTRE_REINTENTOS)
@@ -248,33 +489,43 @@ def obtener_token(fiel: Fiel, intento: int = 1) -> str:
         sys.exit(1)
  
  
-# ---------------------------------------------------------------------------
-# Paso 3 — Solicitar descarga
-# ---------------------------------------------------------------------------
-def solicitar_descarga(fiel: Fiel, token: str, p: dict) -> str | None:
-    """
-    Envía la solicitud de descarga al SAT para un período dado.
-    Retorna el ID de solicitud, o None si el SAT indica que no hay CFDIs (5004).
-    El ID no significa que los datos estén listos — solo que la solicitud fue recibida.
+# ===========================================================================
+# SOLICITUD AL SAT
+# ===========================================================================
  
-    ⚠ ADVERTENCIA CFDI: No repitas el mismo rango más de 2 veces.
-    El SAT bloqueará ese período permanentemente con error 5002.
-    Para Metadata no aplica esta restricción.
+def solicitar_descarga(fiel: Fiel, token: str, p: dict,
+                       dt_inicio: datetime | None = None,
+                       dt_fin: datetime | None = None) -> str | None:
     """
-    log.info(f"  Enviando solicitud al SAT → {p['tipo']} ({p['solicitud']}) | {p['inicio']} → {p['fin']}")
+    Envía la solicitud de descarga al SAT.
+    Acepta datetime opcionalmente para el bypass de offset de segundos (modo CFDI).
+    Retorna el ID de solicitud o None si no hay CFDIs / hubo error.
+ 
+    ⚠ CFDI: el bypass de offset maneja el bloqueo permanente automáticamente.
+       Metadata: no tiene restricción de intentos — no usa offset.
+    """
+    fecha_inicio = dt_inicio or p["inicio"]
+    fecha_fin    = dt_fin    or p["fin"]
+ 
+    log.info(f"  Enviando solicitud → {p['tipo']} ({p['solicitud']})")
+    log.info(f"  Período efectivo  : {fecha_inicio} → {fecha_fin}")
  
     try:
         if p["tipo"] == "emitidos":
             cliente   = SolicitaDescargaEmitidos(fiel)
             resultado = cliente.solicitar_descarga(
-                token, p["rfc"], p["inicio"], p["fin"],
+                token, p["rfc"], fecha_inicio, fecha_fin,
                 rfc_emisor=p["rfc"], tipo_solicitud=p["solicitud"],
             )
         else:
             cliente   = SolicitaDescargaRecibidos(fiel)
+            # El SAT no permite solicitar CFDI recibidos con cancelados incluidos.
+            # estado_comprobante="1" filtra solo vigentes. Para cancelados
+            # solo está disponible Metadata, no CFDI completo.
             resultado = cliente.solicitar_descarga(
-                token, p["rfc"], p["inicio"], p["fin"],
+                token, p["rfc"], fecha_inicio, fecha_fin,
                 rfc_receptor=p["rfc"], tipo_solicitud=p["solicitud"],
+                estado_comprobante="Vigente",
             )
  
         cod          = resultado.get("cod_estatus", "")
@@ -289,32 +540,29 @@ def solicitar_descarga(fiel: Fiel, token: str, p: dict) -> str | None:
         return id_solicitud
  
     except Exception as e:
-        log.error(f"  ✗ Error al enviar solicitud al SAT. Causa: {e}")
-        log.error("  Posibles causas:")
-        log.error("    • Período ya solicitado 2+ veces con CFDI (error 5002)")
-        log.error("    • Token expirado — se renovará en el próximo intento")
+        log.error(f"  ✗ Error al enviar solicitud. Causa: {e}")
         log.error("    • RFC incorrecto o FIEL no asociada a ese RFC")
+        log.error("    • Token expirado — se renovará en el próximo intento")
         return None
  
  
-# ---------------------------------------------------------------------------
-# Paso 4a — Verificar con polling (para CFDI — hace sys.exit en error)
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# VERIFICACIÓN
+# ===========================================================================
+ 
 def verificar_solicitud(fiel: Fiel, id_solicitud: str, p: dict) -> list[str]:
     """
-    Consulta periódicamente al SAT hasta que la solicitud esté lista.
-    Retorna la lista de IDs de paquetes disponibles para descarga.
-    Hace sys.exit() en estados de error — usado para el flujo CFDI.
-    El SAT puede tardar de minutos a 72 horas en alta demanda.
+    Polling hasta que la solicitud esté lista. Hace sys.exit() en error.
+    Usada en modo CFDI donde un error es terminal.
     """
     log.info(f"Verificando solicitud: {id_solicitud}")
-    log.info(f"  Consultando cada {p['intervalo']}s hasta que el SAT confirme...")
+    log.info(f"  Consultando cada {p['intervalo']}s...")
  
     intento = 0
     while True:
         intento += 1
         ahora = datetime.now().strftime("%H:%M:%S")
-        log.info(f"  [{ahora}] Verificación #{intento} — consultando estado...")
+        log.info(f"  [{ahora}] Verificación #{intento}...")
  
         try:
             token        = obtener_token(fiel)
@@ -323,7 +571,6 @@ def verificar_solicitud(fiel: Fiel, id_solicitud: str, p: dict) -> list[str]:
             )
         except Exception as e:
             log.warning(f"  ✗ Error en verificación #{intento}. Causa: {e}")
-            log.info(f"  Reintentando en {p['intervalo']}s...")
             time.sleep(p["intervalo"])
             continue
  
@@ -332,42 +579,32 @@ def verificar_solicitud(fiel: Fiel, id_solicitud: str, p: dict) -> list[str]:
         num_cfdi    = verificacion.get("numero_cfdis", "0")
         paquetes    = verificacion.get("paquetes") or []
  
-        log.info(f"  Estado: {estado} — {estado_desc} | CFDIs reportados: {num_cfdi}")
+        log.info(f"  Estado: {estado} — {estado_desc} | CFDIs: {num_cfdi}")
  
         if estado in (1, 2):
-            log.info(f"  SAT aún procesando. Próximo intento en {p['intervalo']}s...")
+            log.info(f"  SAT procesando. Próximo intento en {p['intervalo']}s...")
             time.sleep(p["intervalo"])
- 
         elif estado == 3:
-            log.info(f"✔ Solicitud terminada. Paquetes disponibles: {len(paquetes)}")
+            log.info(f"✔ Terminada. Paquetes disponibles: {len(paquetes)}")
             for i, pk in enumerate(paquetes, 1):
                 log.info(f"    [{i}] {pk}")
             return paquetes
- 
         elif estado == 5:
             cod = verificacion.get("codigo_estado_solicitud", "")
-            log.error(f"✗ Solicitud rechazada por el SAT. Código: {cod}")
-            log.error("  No hay CFDIs en ese período para este RFC, o la solicitud es inválida.")
+            log.error(f"✗ Rechazada por el SAT. Código: {cod}")
             sys.exit(1)
- 
         elif estado == 6:
-            log.error("✗ Solicitud vencida. El SAT eliminó esta solicitud por inactividad.")
-            log.error("  Genera una nueva solicitud.")
+            log.error("✗ Solicitud vencida. Genera una nueva.")
             sys.exit(1)
- 
         else:
             log.error(f"✗ Estado inesperado: {estado_desc}")
-            log.error("  Contacta la Mesa de Ayuda del SAT si persiste.")
             sys.exit(1)
  
  
-# ---------------------------------------------------------------------------
-# Paso 4b — Verificar sin sys.exit (para Metadata en loop mensual)
-# ---------------------------------------------------------------------------
 def verificar_solicitud_raw(fiel: Fiel, id_solicitud: str, p: dict) -> dict:
     """
-    Igual que verificar_solicitud pero retorna el dict raw en lugar de hacer sys.exit.
-    Usada en el loop mensual de Metadata para poder continuar ante 5004 u otros errores.
+    Igual que verificar_solicitud pero retorna el dict raw sin hacer sys.exit.
+    Usada en el loop mensual de Metadata para continuar ante errores.
     """
     intento = 0
     while True:
@@ -383,23 +620,22 @@ def verificar_solicitud_raw(fiel: Fiel, id_solicitud: str, p: dict) -> dict:
             continue
  
         estado = int(verificacion.get("estado_solicitud", -1))
- 
         if estado in (1, 2):
-            log.info(f"    SAT procesando... próximo intento en {p['intervalo']}s (verificación #{intento})")
+            log.info(f"    SAT procesando... próximo intento en {p['intervalo']}s (#{intento})")
             time.sleep(p["intervalo"])
         else:
             return verificacion
  
  
-# ---------------------------------------------------------------------------
-# Paso 5 — Descargar un paquete ZIP
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# DESCARGA Y EXTRACCIÓN
+# ===========================================================================
+ 
 def descargar_paquete(fiel: Fiel, id_paquete: str, rfc: str, output_dir: Path,
                       numero: int, total: int) -> Path | None:
     """
-    Descarga un paquete del SAT (ZIP en base64) y lo guarda en disco.
-    Reintenta hasta MAX_REINTENTOS_DESCARGA veces ante fallos de red o token expirado.
-    Retorna la ruta al ZIP guardado, o None si falló tras todos los reintentos.
+    Descarga un paquete ZIP del SAT (base64) y lo guarda en disco.
+    Reintenta hasta MAX_REINTENTOS_DESCARGA veces.
     """
     log.info(f"  Descargando paquete {numero}/{total}: {id_paquete}")
  
@@ -414,7 +650,7 @@ def descargar_paquete(fiel: Fiel, id_paquete: str, rfc: str, output_dir: Path,
             zip_path.write_bytes(zip_bytes)
  
             kb = len(zip_bytes) / 1024
-            log.info(f"    ✔ Paquete guardado: {zip_path.name} ({kb:.1f} KB)")
+            log.info(f"    ✔ Guardado: {zip_path.name} ({kb:.1f} KB)")
             return zip_path
  
         except Exception as e:
@@ -424,183 +660,282 @@ def descargar_paquete(fiel: Fiel, id_paquete: str, rfc: str, output_dir: Path,
                 time.sleep(PAUSA_ENTRE_REINTENTOS)
             else:
                 log.error(f"  ✗ Se agotaron los reintentos para: {id_paquete}")
-                log.error("    Este paquete se omitirá. Puedes re-ejecutar para reintentarlo.")
                 return None
  
  
-# ---------------------------------------------------------------------------
-# Paso 6 — Extraer archivos del ZIP
-# ---------------------------------------------------------------------------
-def extraer_archivos(zip_path: Path, nombre_destino: str | None = None) -> list[Path]:
+def extraer_metadata(zip_path: Path, nombre_destino: str) -> list[Path]:
     """
-    Extrae todos los archivos del ZIP descargado.
-    - nombre_destino: si se pasa, renombra el primer archivo con ese nombre.
-      Usado en modo Metadata para nombrar el .txt como YYYY-MM-RFC.txt
-    - Sin nombre_destino: extrae con nombres originales en subcarpeta del paquete.
+    Extrae TXT de Metadata, renombra como YYYY-MM-RFC.txt y borra el ZIP.
     """
-    archivo_dir = zip_path.parent
-    archivo_dir.mkdir(parents=True, exist_ok=True)
- 
-    log.info(f"  Extrayendo: {zip_path.name}")
+    output_dir = zip_path.parent
+    log.info(f"  Extrayendo Metadata de: {zip_path.name}")
  
     try:
         extraidos: list[Path] = []
         with zipfile.ZipFile(zip_path, "r") as zf:
             contenido = zf.namelist()
             log.info(f"  Archivos en el paquete: {len(contenido)}")
- 
             for i, nombre in enumerate(contenido):
-                if nombre_destino and i == 0:
-                    # Preservar la extensión original del archivo
-                    ext  = Path(nombre).suffix or ".txt"
-                    dest = archivo_dir / f"{nombre_destino}{ext}"
-                else:
-                    # Sin nombre personalizado: subcarpeta por paquete
-                    sub = archivo_dir / zip_path.stem
-                    sub.mkdir(exist_ok=True)
-                    dest = sub / nombre
- 
+                ext    = Path(nombre).suffix or ".txt"
+                sufijo = f"_{i + 1}" if i > 0 else ""
+                dest   = output_dir / f"{nombre_destino}{sufijo}{ext}"
                 dest.write_bytes(zf.read(nombre))
                 extraidos.append(dest)
                 log.info(f"    → {dest.name}")
  
-        log.info(f"  ✔ {len(extraidos)} archivo(s) extraído(s).")
+        log.info(f"  Eliminando ZIP de Metadata: {zip_path.name}...")
+        zip_path.unlink()
+        log.info(f"  ✔ ZIP eliminado correctamente: {zip_path.name}")
         return extraidos
  
     except zipfile.BadZipFile:
-        log.error(f"  ✗ ZIP corrupto o incompleto: {zip_path}")
-        log.error("  Elimina el ZIP y re-ejecuta el script para volver a descargarlo.")
+        log.error(f"  ✗ ZIP corrupto: {zip_path}. Elimínalo y re-ejecuta.")
         return []
     except Exception as e:
-        log.error(f"  ✗ Error inesperado al extraer ZIP. Causa: {e}")
+        log.error(f"  ✗ Error al extraer Metadata. Causa: {e}")
         return []
  
  
-# ---------------------------------------------------------------------------
-# Helper — Generar períodos mensuales
-# ---------------------------------------------------------------------------
+def extraer_cfdi(zip_path: Path, nombre_destino: str) -> tuple[list[Path], Path | None]:
+    """
+    Extrae XMLs del ZIP en subcarpeta YYYY-MM-RFC/ y renombra el ZIP.
+    Conserva el ZIP renombrado como YYYY-MM-RFC.zip.
+    """
+    output_dir = zip_path.parent
+    xml_dir    = output_dir / nombre_destino
+    xml_dir.mkdir(exist_ok=True)
+ 
+    log.info(f"  Extrayendo XMLs de: {zip_path.name}")
+    log.info(f"  Destino           : {xml_dir.name}/")
+ 
+    try:
+        extraidos: list[Path] = []
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            xmls = [n for n in zf.namelist() if n.lower().endswith(".xml")]
+            log.info(f"  XMLs en el paquete: {len(xmls)}")
+            for nombre in xmls:
+                dest = xml_dir / nombre
+                dest.write_bytes(zf.read(nombre))
+                extraidos.append(dest)
+ 
+        nuevo_zip = output_dir / f"{nombre_destino}.zip"
+        zip_path.rename(nuevo_zip)
+        log.info(f"  ✔ ZIP renombrado: {nuevo_zip.name}")
+        log.info(f"  ✔ {len(extraidos)} XML(s) extraídos en: {xml_dir.name}/")
+        return extraidos, nuevo_zip
+ 
+    except zipfile.BadZipFile:
+        log.error(f"  ✗ ZIP corrupto: {zip_path}")
+        return [], None
+    except Exception as e:
+        log.error(f"  ✗ Error al extraer XMLs. Causa: {e}")
+        return [], None
+ 
+ 
+# ===========================================================================
+# HELPERS — PERÍODOS Y RESUMEN
+# ===========================================================================
+ 
 def generar_periodos_mensuales(inicio: date, fin: date) -> list[tuple[date, date]]:
-    """
-    Divide un rango de fechas en sub-períodos de un mes cada uno.
-    Usado exclusivamente en modo Metadata para logs granulares por mes/año
-    y para continuar automáticamente cuando un mes no tiene CFDIs (5004).
-    """
+    """Divide un rango en períodos de un mes. Usado exclusivamente en modo Metadata."""
     periodos = []
     actual   = inicio.replace(day=1)
- 
     while actual <= fin:
         ultimo_dia = monthrange(actual.year, actual.month)[1]
         mes_inicio = max(actual, inicio)
         mes_fin    = min(date(actual.year, actual.month, ultimo_dia), fin)
         periodos.append((mes_inicio, mes_fin))
- 
-        if actual.month == 12:
-            actual = date(actual.year + 1, 1, 1)
-        else:
-            actual = date(actual.year, actual.month + 1, 1)
- 
+        actual = date(actual.year + 1, 1, 1) if actual.month == 12 \
+                 else date(actual.year, actual.month + 1, 1)
     return periodos
  
  
-# ---------------------------------------------------------------------------
-# Helper — Procesar un período mensual completo
-# ---------------------------------------------------------------------------
-def procesar_periodo_metadata(fiel: Fiel, p: dict, mes_inicio: date, mes_fin: date,
-                              numero: int, total: int) -> list[Path]:
+def procesar_mes_metadata(fiel: Fiel, p: dict, output_dir: Path,
+                          mes_inicio: date, mes_fin: date,
+                          numero: int, total: int) -> list[Path]:
     """
-    Ejecuta el flujo completo (solicitar → verificar → descargar → extraer)
-    para un mes específico en modo Metadata.
-    Retorna lista de archivos descargados, o lista vacía si el mes no tiene CFDIs.
-    Nunca hace sys.exit() — deja que el loop principal decida continuar.
+    Flujo completo para un mes en modo Metadata.
+    Nunca hace sys.exit() — permite que el loop continúe.
     """
-    MESES_ES = {
-        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
-        5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
-        9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
-    }
-    mes_label = f"{MESES_ES[mes_inicio.month]} {mes_inicio.year}"
+    mes_num   = mes_inicio.strftime("%m")
+    mes_label = f"{MESES_ES[mes_num]} {mes_inicio.year}"
  
     log.info("")
     log.info(f"  ┌─ [{numero}/{total}] {mes_label}  ({mes_inicio} → {mes_fin})")
  
-    p_mes = {**p, "inicio": mes_inicio, "fin": mes_fin}
+    p_mes = {**p, "inicio": mes_inicio, "fin": mes_fin, "output": output_dir}
  
     try:
         token        = obtener_token(fiel)
         id_solicitud = solicitar_descarga(fiel, token, p_mes)
  
         if not id_solicitud:
-            log.info(f"  └─ {mes_label}: Sin actividad reportada por el SAT — continuando.")
+            log.info(f"  └─ {mes_label}: Sin actividad — continuando.")
             return []
  
         verificacion = verificar_solicitud_raw(fiel, id_solicitud, p_mes)
- 
-        estado   = int(verificacion.get("estado_solicitud", -1))
-        cod      = verificacion.get("codigo_estado_solicitud", "")
-        num_cfdi = int(verificacion.get("numero_cfdis", 0) or 0)
-        paquetes = verificacion.get("paquetes") or []
+        estado       = int(verificacion.get("estado_solicitud", -1))
+        cod          = verificacion.get("codigo_estado_solicitud", "")
+        num_cfdi     = int(verificacion.get("numero_cfdis", 0) or 0)
+        paquetes     = verificacion.get("paquetes") or []
  
         if estado == 5 and cod == "5004":
-            log.info(f"  └─ {mes_label}: Sin CFDIs en este período — continuando.")
+            log.info(f"  └─ {mes_label}: Sin CFDIs — continuando.")
             return []
- 
         if estado == 5:
-            log.warning(f"  └─ {mes_label}: Rechazado por el SAT (código {cod}) — continuando.")
+            log.warning(f"  └─ {mes_label}: Rechazado (código {cod}) — continuando.")
             return []
- 
         if estado != 3:
             log.warning(f"  └─ {mes_label}: Estado inesperado {estado} — continuando.")
             return []
  
-        log.info(f"  │  ✔ {num_cfdi} CFDI(s) encontrados")
-        log.info(f"  │  Paquetes a descargar: {len(paquetes)}")
+        log.info(f"  │  ✔ {num_cfdi} CFDI(s) | {len(paquetes)} paquete(s)")
  
         archivos: list[Path] = []
         for i, id_paquete in enumerate(paquetes, 1):
-            zip_path = descargar_paquete(fiel, id_paquete, p["rfc"], p["output"], i, len(paquetes))
+            zip_path = descargar_paquete(fiel, id_paquete, p["rfc"], output_dir, i, len(paquetes))
             if zip_path:
-                # Nombre: YYYY-MM-RFC (ej. 2025-01-VAVC930829LJ1)
-                nombre_destino = f"{mes_inicio.strftime('%Y-%m')}-{p['rfc']}"
-                extraidos = extraer_archivos(zip_path, nombre_destino=nombre_destino)
+                nombre   = f"{mes_inicio.strftime('%Y-%m')}-{p['rfc']}"
+                extraidos = extraer_metadata(zip_path, nombre)
                 archivos.extend(extraidos)
  
         log.info(f"  └─ {mes_label}: {len(archivos)} archivo(s) guardados. ✔")
         return archivos
  
     except Exception as e:
-        log.warning(f"  └─ {mes_label}: Error inesperado ({e}) — continuando con el siguiente mes.")
+        log.warning(f"  └─ {mes_label}: Error inesperado ({e}) — continuando.")
         return []
  
  
-# ---------------------------------------------------------------------------
+def generar_resumen_metadata(archivos: list[Path], params: dict) -> list[str]:
+    """
+    Lee los TXT de Metadata y genera un resumen legible para humanos.
+    Columnas SAT (separadas por ~):
+    UUID~RfcEmisor~NombreEmisor~RfcReceptor~NombreReceptor~Pac
+    ~FechaEmision~FechaCertSat~Monto~EfectoComprobante~Estatus~FechaCancelacion
+    """
+    if not archivos:
+        return ["  Sin archivos de Metadata para resumir."]
+ 
+    total_cfdis = 0
+    total_monto = 0.0
+    por_mes: dict[str, dict] = {}
+    emisores: dict[str, int] = {}
+ 
+    for archivo in archivos:
+        if archivo.suffix.lower() != ".txt":
+            continue
+        try:
+            lineas = archivo.read_text(encoding="utf-8", errors="ignore").splitlines()
+            datos  = [l for l in lineas[1:] if l.strip()]
+            partes    = archivo.stem.split("-")
+            anio      = partes[0] if len(partes) >= 1 else "????"
+            mes_num   = partes[1] if len(partes) >= 2 else "??"
+            clave_mes = f"{anio}-{mes_num}"
+            mes_label = f"{MESES_ES.get(mes_num, mes_num)} {anio}"
+            mes_cfdis = 0
+            mes_monto = 0.0
+ 
+            for linea in datos:
+                cols = linea.split("~")
+                if len(cols) < 9:
+                    continue
+                mes_cfdis   += 1
+                total_cfdis += 1
+                try:
+                    monto        = float(cols[8].replace(",", "").strip())
+                    mes_monto   += monto
+                    total_monto += monto
+                except ValueError:
+                    pass
+                rfc_emisor    = cols[1].strip() if len(cols) > 1 else "?"
+                nombre_emisor = cols[2].strip() if len(cols) > 2 else "?"
+                clave_emisor  = f"{rfc_emisor} — {nombre_emisor}"
+                emisores[clave_emisor] = emisores.get(clave_emisor, 0) + 1
+ 
+            por_mes[clave_mes] = {"label": mes_label, "cfdis": mes_cfdis, "monto": mes_monto}
+        except Exception as e:
+            log.warning(f"  No se pudo leer: {archivo.name}. Causa: {e}")
+ 
+    if total_cfdis == 0:
+        return ["  No se encontraron registros legibles en los archivos de Metadata."]
+ 
+    tipo_label = "emitidas" if params["tipo"] == "emitidos" else "recibidas"
+    lineas: list[str] = []
+    lineas.append(f"  El RFC {params['rfc']} tiene {total_cfdis} factura(s) {tipo_label}")
+    lineas.append(f"  en el período {params['inicio']} → {params['fin']}.")
+    lineas.append(f"  Monto total acumulado: ${total_monto:,.2f} MXN")
+    lineas.append("")
+    lineas.append("  Desglose por mes:")
+    for clave in sorted(por_mes.keys()):
+        info = por_mes[clave]
+        lineas.append(
+            f"    • {info['label']:<20} {info['cfdis']:>5} CFDI(s)   "
+            f"${info['monto']:>14,.2f} MXN"
+        )
+    if emisores:
+        top = sorted(emisores.items(), key=lambda x: x[1], reverse=True)[:5]
+        lineas.append("")
+        lineas.append("  Top 5 emisores/receptores más frecuentes:")
+        for nombre, cantidad in top:
+            lineas.append(f"    • {cantidad:>4}x  {nombre}")
+    return lineas
+ 
+ 
+# ===========================================================================
 # CLI
-# ---------------------------------------------------------------------------
+# ===========================================================================
+ 
 def parse_args() -> dict | None:
-    """Retorna dict con parámetros si se pasaron argumentos, o None para modo interactivo."""
+    """
+    Retorna dict con parámetros si se pasaron argumentos, o None para modo interactivo.
+    --reveal-cache se maneja aquí antes que cualquier otra lógica.
+    """
     if len(sys.argv) == 1:
         return None
  
     p = argparse.ArgumentParser(description="Descarga masiva de CFDI (XML) del SAT")
-    p.add_argument("--rfc",       required=True)
-    p.add_argument("--cer",       required=True,  type=Path)
-    p.add_argument("--key",       required=True,  type=Path)
-    p.add_argument("--password",  required=False, default=None,
-                   help="Contraseña FIEL. Si se omite, se pedirá de forma segura (recomendado para contraseñas con espacios).")
-    p.add_argument("--inicio",    required=True,  type=date.fromisoformat)
-    p.add_argument("--fin",       required=True,  type=date.fromisoformat)
+ 
+    # Modo utilidad
+    p.add_argument("--reveal-cache", metavar="RFC|all", default=None,
+                   help="Descifra y muestra el historial de caché de un RFC o de todos.")
+ 
+    # Parámetros de descarga
+    p.add_argument("--rfc",       default=None)
+    p.add_argument("--cer",       type=Path, default=None)
+    p.add_argument("--key",       type=Path, default=None)
+    p.add_argument("--password",  default=None,
+                   help="Contraseña FIEL. Si se omite, se pedirá de forma segura.")
+    p.add_argument("--inicio",    type=date.fromisoformat, default=None)
+    p.add_argument("--fin",       type=date.fromisoformat, default=None)
     p.add_argument("--tipo",      choices=["emitidos", "recibidos"], default="recibidos")
     p.add_argument("--solicitud", choices=["CFDI", "Metadata"],      default="CFDI")
-    p.add_argument("--output",    type=Path, default=None,
-                   help="Carpeta de salida. Si se omite, se crea automáticamente como ./results_RFC")
+    p.add_argument("--excel",     choices=["resumen", "detalle", "completo"], default=None)
+    p.add_argument("--output",    type=Path, default=None)
     p.add_argument("--intervalo", type=int,  default=60)
+ 
     args = p.parse_args()
  
+    # --reveal-cache es un modo independiente — no necesita los demás args
+    if args.reveal_cache:
+        reveal_cache(args.reveal_cache)
+        sys.exit(0)
+ 
+    # Validar que los args obligatorios estén presentes en modo descarga
+    faltantes = [f"--{f}" for f, v in [
+        ("rfc", args.rfc), ("cer", args.cer),
+        ("key", args.key), ("inicio", args.inicio), ("fin", args.fin)
+    ] if v is None]
+ 
+    if faltantes:
+        p.error(f"Los siguientes argumentos son requeridos: {', '.join(faltantes)}")
+ 
+    rfc      = args.rfc.upper()
     password = args.password
     if not password:
         log.info("--password no proporcionado. Solicitando de forma segura...")
         password = getpass("  → Contraseña de la FIEL (oculta): ")
  
-    rfc    = args.rfc.upper()
     output = args.output if args.output else Path(f"./results_{rfc}")
  
     return {
@@ -612,111 +947,16 @@ def parse_args() -> dict | None:
         "fin":       args.fin,
         "tipo":      args.tipo,
         "solicitud": args.solicitud,
+        "excel":     args.excel,
         "output":    output,
         "intervalo": args.intervalo,
     }
  
  
+# ===========================================================================
+# MAIN
+# ===========================================================================
  
-# ---------------------------------------------------------------------------
-# Helper — Generar resumen legible del contenido de Metadata
-# ---------------------------------------------------------------------------
-def generar_resumen_metadata(archivos: list[Path], params: dict) -> list[str]:
-    """
-    Lee los archivos .txt de Metadata descargados y genera un resumen
-    legible para humanos con totales por mes, emisores frecuentes y montos.
-    Formato del Metadata SAT (separado por ~):
-    UUID~RfcEmisor~NombreEmisor~RfcReceptor~NombreReceptor~PacCertificado
-    ~FechaEmision~FechaCertificacionSat~Monto~EfectoComprobante~Estatus~FechaCancelacion
-    """
-    if not archivos:
-        return ["  Sin archivos de Metadata para resumir."]
- 
-    MESES_ES = {
-        "01": "Enero",   "02": "Febrero",  "03": "Marzo",    "04": "Abril",
-        "05": "Mayo",    "06": "Junio",    "07": "Julio",    "08": "Agosto",
-        "09": "Septiembre", "10": "Octubre", "11": "Noviembre", "12": "Diciembre",
-    }
- 
-    total_cfdis  = 0
-    total_monto  = 0.0
-    por_mes: dict[str, dict] = {}
-    emisores: dict[str, int] = {}
- 
-    for archivo in archivos:
-        if not archivo.suffix.lower() == ".txt":
-            continue
-        try:
-            lineas = archivo.read_text(encoding="utf-8", errors="ignore").splitlines()
-            # Primera línea es encabezado
-            datos = [l for l in lineas[1:] if l.strip()]
-            # Extraer YYYY-MM del nombre del archivo (formato YYYY-MM-RFC.txt)
-            partes    = archivo.stem.split("-")
-            clave_mes = f"{partes[0]}-{partes[1]}" if len(partes) >= 2 else "??-??"
-            mes_num   = partes[1] if len(partes) >= 2 else "??"
-            anio      = partes[0] if len(partes) >= 1 else "????"
-            mes_label = f"{MESES_ES.get(mes_num, mes_num)} {anio}"
- 
-            mes_cfdis = 0
-            mes_monto = 0.0
- 
-            for linea in datos:
-                cols = linea.split("~")
-                if len(cols) < 9:
-                    continue
-                mes_cfdis += 1
-                total_cfdis += 1
-                try:
-                    monto = float(cols[8].replace(",", "").strip())
-                    mes_monto   += monto
-                    total_monto += monto
-                except ValueError:
-                    pass
-                rfc_emisor    = cols[1].strip() if len(cols) > 1 else "?"
-                nombre_emisor = cols[2].strip() if len(cols) > 2 else "?"
-                clave_emisor  = f"{rfc_emisor} — {nombre_emisor}"
-                emisores[clave_emisor] = emisores.get(clave_emisor, 0) + 1
- 
-            por_mes[clave_mes] = {
-                "label":  mes_label,
-                "cfdis":  mes_cfdis,
-                "monto":  mes_monto,
-            }
-        except Exception as e:
-            log.warning(f"  No se pudo leer el archivo de Metadata: {archivo.name}. Causa: {e}")
- 
-    if total_cfdis == 0:
-        return ["  No se encontraron registros legibles en los archivos de Metadata."]
- 
-    lineas_resumen = []
-    tipo_label = "emitidas" if params["tipo"] == "emitidos" else "recibidas"
- 
-    lineas_resumen.append(f"  El RFC {params['rfc']} tiene {total_cfdis} factura(s) {tipo_label}")
-    lineas_resumen.append(f"  en el período {params['inicio']} → {params['fin']}.")
-    lineas_resumen.append(f"  Monto total acumulado: ${total_monto:,.2f} MXN")
-    lineas_resumen.append("")
-    lineas_resumen.append("  Desglose por mes:")
- 
-    for clave in sorted(por_mes.keys()):
-        info = por_mes[clave]
-        lineas_resumen.append(
-            f"    • {info['label']:<20} {info['cfdis']:>5} CFDI(s)   "
-            f"${info['monto']:>14,.2f} MXN"
-        )
- 
-    if emisores:
-        top_emisores = sorted(emisores.items(), key=lambda x: x[1], reverse=True)[:5]
-        lineas_resumen.append("")
-        lineas_resumen.append("  Top 5 emisores/receptores frecuentes:")
-        for nombre, cantidad in top_emisores:
-            lineas_resumen.append(f"    • {cantidad:>4}x  {nombre}")
- 
-    return lineas_resumen
- 
- 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 def main() -> None:
     inicio_proceso = datetime.now()
  
@@ -727,15 +967,16 @@ def main() -> None:
  
     params = parse_args() or preguntar_parametros()
  
+    # Verificar SAT_CACHE_SALT antes de cualquier otra cosa
+    _validar_salt()
+ 
     validar_parametros(params)
  
-    params["output"].mkdir(parents=True, exist_ok=True)
-    log.info(f"Carpeta de salida: {params['output'].resolve()}")
- 
-    fiel = cargar_fiel(params["cer"], params["key"], params["password"])
+    output_dir = resolver_output(params)
+    fiel       = cargar_fiel(params["cer"], params["key"], params["password"])
  
     # -----------------------------------------------------------------------
-    # Modo Metadata — procesa mes a mes, continúa si no hay CFDIs en un mes
+    # Modo Metadata — procesa mes a mes, sin caché (no hay riesgo de bloqueo)
     # -----------------------------------------------------------------------
     if params["solicitud"] == "Metadata":
         periodos = generar_periodos_mensuales(params["inicio"], params["fin"])
@@ -746,21 +987,25 @@ def main() -> None:
         log.info(f"  RFC    : {params['rfc']}")
         log.info(f"  Tipo   : {params['tipo']}")
         log.info(f"  Rango  : {params['inicio']} → {params['fin']}")
-        log.info("  El script avanzará automáticamente si un mes no tiene CFDIs.")
+        log.info(f"  Salida : {output_dir.resolve()}")
+        log.info("  ZIPs se eliminarán automáticamente tras extraer cada TXT.")
+        log.info("  El script avanzará si un mes no tiene CFDIs (código 5004).")
  
         archivos_totales: list[Path] = []
-        meses_con_datos  = 0
-        meses_sin_datos  = 0
+        meses_con_datos = 0
+        meses_sin_datos = 0
  
         for i, (mes_inicio, mes_fin) in enumerate(periodos, 1):
-            archivos = procesar_periodo_metadata(fiel, params, mes_inicio, mes_fin, i, total)
+            archivos = procesar_mes_metadata(
+                fiel, params, output_dir, mes_inicio, mes_fin, i, total
+            )
             if archivos:
                 meses_con_datos += 1
                 archivos_totales.extend(archivos)
             else:
                 meses_sin_datos += 1
  
-        duracion = int((datetime.now() - inicio_proceso).total_seconds())
+        duracion        = int((datetime.now() - inicio_proceso).total_seconds())
         resumen_legible = generar_resumen_metadata(archivos_totales, params)
  
         log.info("")
@@ -774,7 +1019,7 @@ def main() -> None:
         log.info(f"  Meses con CFDIs      : {meses_con_datos}")
         log.info(f"  Meses sin actividad  : {meses_sin_datos}")
         log.info(f"  Archivos descargados : {len(archivos_totales)}")
-        log.info(f"  Carpeta de salida    : {params['output'].resolve()}")
+        log.info(f"  Carpeta de salida    : {output_dir.resolve()}")
         log.info(f"  Duración total       : {duracion // 60}m {duracion % 60}s")
         log.info(f"  Log guardado en      : sat_descarga.log")
         log.info("=" * 65)
@@ -787,15 +1032,40 @@ def main() -> None:
             log.info("=" * 65)
  
     # -----------------------------------------------------------------------
-    # Modo CFDI — respeta el rango completo sin dividir por mes
+    # Modo CFDI — bypass de offset automático via caché encriptado
     # -----------------------------------------------------------------------
     else:
         log.info("")
-        log.info("Modo CFDI — procesando rango completo (sin dividir por mes)")
-        log.info("⚠  Recuerda: máximo 2 solicitudes por el mismo período+RFC.")
+        log.info("Modo CFDI — procesando rango completo")
+        log.info(f"  RFC    : {params['rfc']}")
+        log.info(f"  Tipo   : {params['tipo']}")
+        log.info(f"  Rango  : {params['inicio']} → {params['fin']}")
+        log.info(f"  Salida : {output_dir.resolve()}")
+ 
+        # Consultar historial antes de tocar el SAT
+        historial = consultar_historial(
+            params["rfc"], params["inicio"], params["fin"], params["tipo"]
+        )
+        intentos_previos = historial["intentos"]
+        offset_seg       = historial["offset_segundos"]
+ 
+        if intentos_previos == 0:
+            log.info("  Caché: primera solicitud para este período.")
+        else:
+            log.info(f"  Caché: {intentos_previos} intento(s) previo(s) detectado(s).")
+            log.info(f"  Bypass activado: se aplicará offset de +{offset_seg}s al inicio del período.")
+            log.info(f"  Esto evita el bloqueo permanente del SAT (error 5002).")
+ 
+        # Registrar este intento y obtener el offset a usar
+        offset_actual = registrar_intento(
+            params["rfc"], params["inicio"], params["fin"], params["tipo"]
+        )
+        dt_inicio, dt_fin = fechas_con_offset(params["inicio"], params["fin"], offset_actual)
+ 
+        log.info(f"  Período efectivo : {dt_inicio} → {dt_fin}")
  
         token        = obtener_token(fiel)
-        id_solicitud = solicitar_descarga(fiel, token, params)
+        id_solicitud = solicitar_descarga(fiel, token, params, dt_inicio, dt_fin)
  
         if not id_solicitud:
             log.error("✗ No se pudo obtener un ID de solicitud del SAT.")
@@ -804,17 +1074,21 @@ def main() -> None:
         paquetes = verificar_solicitud(fiel, id_solicitud, params)
  
         if not paquetes:
-            log.warning("El SAT no devolvió paquetes. No hay CFDI en ese período para este RFC.")
+            log.warning("El SAT no devolvió paquetes. No hay CFDI en ese período.")
             sys.exit(0)
  
-        archivos_totales: list[Path] = []
+        nombre_base   = f"{params['inicio'].strftime('%Y-%m')}-{params['rfc']}"
+        xmls_totales: list[Path] = []
         log.info(f"Iniciando descarga de {len(paquetes)} paquete(s)...")
  
         for i, id_paquete in enumerate(paquetes, 1):
-            zip_path = descargar_paquete(fiel, id_paquete, params["rfc"], params["output"], i, len(paquetes))
+            zip_path = descargar_paquete(
+                fiel, id_paquete, params["rfc"], output_dir, i, len(paquetes)
+            )
             if zip_path:
-                extraidos = extraer_archivos(zip_path)
-                archivos_totales.extend(extraidos)
+                nombre_paquete = nombre_base if len(paquetes) == 1 else f"{nombre_base}_{i}"
+                xmls, _        = extraer_cfdi(zip_path, nombre_paquete)
+                xmls_totales.extend(xmls)
  
         duracion = int((datetime.now() - inicio_proceso).total_seconds())
         log.info("")
@@ -822,11 +1096,16 @@ def main() -> None:
         log.info("RESUMEN FINAL — DESCARGA MASIVA CFDI")
         log.info("=" * 65)
         log.info(f"  RFC                  : {params['rfc']}")
-        log.info(f"  Rango procesado      : {params['inicio']} → {params['fin']}")
-        log.info(f"  Archivos descargados : {len(archivos_totales)}")
-        log.info(f"  Carpeta de salida    : {params['output'].resolve()}")
+        log.info(f"  Tipo                 : {params['tipo']}")
+        log.info(f"  Rango solicitado     : {params['inicio']} → {params['fin']}")
+        log.info(f"  Período efectivo     : {dt_inicio} → {dt_fin}")
+        log.info(f"  Intento #            : {intentos_previos + 1} (offset: +{offset_actual}s)")
+        log.info(f"  XMLs descargados     : {len(xmls_totales)}")
+        log.info(f"  Carpeta de salida    : {output_dir.resolve()}")
         log.info(f"  Duración total       : {duracion // 60}m {duracion % 60}s")
         log.info(f"  Log guardado en      : sat_descarga.log")
+        if params.get("excel"):
+            log.info(f"  Excel solicitado     : {params['excel']} (pendiente de implementar)")
         log.info("=" * 65)
  
  
