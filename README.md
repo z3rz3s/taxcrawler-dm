@@ -1,6 +1,6 @@
-# taxcrawler-dm
+# sat-descarga-masiva
 
-A zero-cost, open-source Python script to bulk-download CFDI (XML invoices) directly from the Mexican Tax Administration Service (SAT) Web Service — no third-party APIs, no subscriptions, no recurring fees.
+A zero-cost, open-source Python script to bulk-download CFDI (XML invoices) directly from the Mexican Tax Administration Service (SAT) Web Service v1.5 — no third-party APIs, no subscriptions, no recurring fees.
 
 ---
 
@@ -10,11 +10,16 @@ A zero-cost, open-source Python script to bulk-download CFDI (XML invoices) dire
 - [How It Works](#how-it-works)
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [Environment Setup](#environment-setup)
 - [Usage](#usage)
   - [Interactive Mode](#interactive-mode)
-  - [CLI Mode](#cli-mode)
+  - [CLI Mode — Metadata](#cli-mode--metadata)
+  - [CLI Mode — CFDI](#cli-mode--cfdi)
+  - [Utility Mode — Reveal Cache](#utility-mode--reveal-cache)
   - [All Arguments](#all-arguments)
 - [Output Structure](#output-structure)
+- [Encrypted Cache](#encrypted-cache)
+- [Duplicate Request Protection](#duplicate-request-protection)
 - [Logging](#logging)
 - [Error Handling](#error-handling)
 - [Important SAT Constraints](#important-sat-constraints)
@@ -28,36 +33,47 @@ The SAT provides an official SOAP Web Service (v1.5, released May 2025) that all
 
 - Interactive prompts when run without arguments
 - Full CLI support for automation and scheduling
-- Descriptive step-by-step logging to stdout and a log file
-- Automatic retries on transient network or service failures
+- Two download modes: **Metadata** (lightweight TXT summary) and **CFDI** (full XML files)
+- Automatic monthly splitting in Metadata mode with graceful continuation on empty months
+- Encrypted local cache to prevent permanent SAT period blocking (error 5002)
+- Automatic datetime offset bypass — each request uses a slightly different timestamp to avoid duplicate detection
+- Descriptive step-by-step logging to stdout and a persistent log file
+- Automatic retries on transient network or SAT service failures
 - Fail-fast validation before any SAT call is made
-- Organized output: one subfolder per downloaded package
+- Organized output separated by mode and execution date
 
 ---
 
 ## How It Works
 
-The script follows the 4-step flow defined by the SAT Web Service, exposed as independent functions:
+The script follows the official SAT Web Service flow through independent functions:
 
 ```
-1. validar_parametros     → Validate all inputs before touching the SAT
-2. cargar_fiel            → Load and verify your FIEL (e.firma) certificate
-3. obtener_token          → Authenticate against the SAT and get a session token
-4. solicitar_descarga     → Submit the download request, receive a request ID
-5. verificar_solicitud    → Poll the SAT until the request is ready (minutes to hours)
-6. descargar_paquete      → Download each ZIP package returned by the SAT
-7. extraer_xmls           → Extract individual XML files from each ZIP
-8. imprimir_resumen       → Print a final summary with totals and duration
+1. _validar_salt         → Verify SAT_CACHE_SALT env variable is set
+2. validar_parametros    → Validate all inputs before touching the SAT
+3. resolver_output       → Create results_RFC/metadata|cfdi/YYYY-MM-DD/
+4. cargar_fiel           → Load and verify your FIEL (e.firma) certificate
+5. obtener_token         → Authenticate against the SAT, get a session token
+6. consultar_historial   → Check encrypted cache for prior attempts (CFDI only)
+7. registrar_intento     → Record attempt and calculate datetime offset (CFDI only)
+8. solicitar_descarga    → Submit the download request, receive a request ID
+9. verificar_solicitud   → Poll the SAT until the request is ready (minutes to hours)
+10. descargar_paquete    → Download each ZIP package returned by the SAT
+11. extraer_metadata     → Extract TXT, rename as YYYY-MM-RFC.txt, delete ZIP (Metadata)
+    extraer_cfdi         → Extract XMLs, rename ZIP as YYYY-MM-RFC.zip, keep it (CFDI)
+12. generar_resumen      → Print human-readable summary with totals and top issuers
 ```
 
-Each function is responsible for a single step, logs exactly what it is attempting, and handles its own errors with human-readable explanations.
+**Metadata mode** processes the date range month by month, continuing automatically if a month has no CFDIs (SAT code 5004). This provides granular per-month logs and avoids timeouts on large ranges.
+
+**CFDI mode** submits the full date range in a single request, using the encrypted cache to apply an automatic second-offset bypass on every attempt.
 
 ---
 
 ## Requirements
 
-- Python 3.10+
-- A valid **FIEL (e.firma)** issued by the SAT, composed of:
+- Python 3.13 (recommended — tested and verified)
+- A valid **FIEL (e.firma)** issued by the SAT:
   - `.cer` — public certificate file
   - `.key` — private key file
   - Password for the private key
@@ -69,22 +85,41 @@ Each function is responsible for a single step, logs exactly what it is attempti
 
 ```bash
 # Clone the repository
-git clone https://github.com/cvaldezscse/taxcrawler-dm.git
+git clone https://github.com/your-username/sat-descarga-masiva.git
 cd sat-descarga-masiva
 
-# Install the only dependency
-pip install cfdiclient
+# Install dependencies into the local libs/ folder (no virtual environment needed)
+python3.13 -m pip install cfdiclient openpyxl python-dotenv --target ./libs --break-system-packages
 ```
 
-No virtual environment is strictly required, but recommended:
+The script automatically detects and uses the `libs/` folder. No system-wide installation or virtual environment required.
+
+---
+
+## Environment Setup
+
+The script uses an encrypted cache to protect request history. The encryption key is derived from an environment variable — never hardcoded.
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate      # macOS / Linux
-.venv\Scripts\activate         # Windows
-
-pip install cfdiclient
+# Copy the example env file
+cp .env.example .env
 ```
+
+Edit `.env` and set your own secret salt:
+
+```
+SAT_CACHE_SALT=your_long_random_secret_value_here
+```
+
+To generate a strong random value:
+
+```bash
+openssl rand -base64 32
+```
+
+Make sure `.env` is in your `.gitignore` — it should never be committed to the repository.
+
+The script will fail with clear instructions if `SAT_CACHE_SALT` is not defined before any download attempt.
 
 ---
 
@@ -92,112 +127,185 @@ pip install cfdiclient
 
 ### Interactive Mode
 
-Run without arguments and the script will prompt you for each parameter, validating input in real time. The FIEL password is entered securely (hidden input).
+Run without arguments. The script will prompt for each parameter, validate file paths in real time, and hide the FIEL password input.
 
 ```bash
-python sat_descarga_masiva.py
+python3.13 sat_descarga_masiva.py
 ```
 
-Example session:
+### CLI Mode — Metadata
 
-```
-  → RFC del contribuyente: TURF010101ABC
-  → Ruta al archivo .cer de la FIEL: /certs/fiel.cer
-  → Ruta al archivo .key de la FIEL: /certs/fiel.key
-  → Contraseña de la FIEL (oculta):
-  → Fecha inicio (YYYY-MM-DD) [2024-01-01]:
-  → Fecha fin    (YYYY-MM-DD) [2025-03-28]:
-  → Tipo de descarga [emitidos / recibidos] [recibidos]:
-  → Tipo de solicitud [CFDI / Metadata] [CFDI]:
-  → Carpeta de salida [./xml_sat]:
-  → Segundos entre verificaciones [60]:
-```
-
-### CLI Mode
-
-Pass all parameters as arguments. Suitable for cron jobs, CI pipelines, or any scheduled execution.
+Downloads lightweight TXT summary files, one per month. ZIPs are automatically deleted after extraction. Safe to run repeatedly — no blocking risk.
 
 ```bash
-python sat_descarga_masiva.py \
-  --rfc   TURF010101ABC \
-  --cer   /certs/fiel.cer \
-  --key   /certs/fiel.key \
-  --password "your_fiel_password" \
-  --inicio  2024-01-01 \
-  --fin     2024-12-31 \
-  --tipo    recibidos \
-  --output  ./xml_sat
+python3.13 sat_descarga_masiva.py \
+  --rfc VAVC930829LJ1 \
+  --cer ~/certs/fiel.cer \
+  --key ~/certs/fiel.key \
+  --inicio 2024-01-01 \
+  --fin 2024-12-31 \
+  --tipo recibidos \
+  --solicitud Metadata \
+  --intervalo 30
+```
+
+### CLI Mode — CFDI
+
+Downloads full XML files for the specified date range. The encrypted cache automatically applies a datetime offset on each run to prevent SAT permanent blocking. Only active (non-cancelled) received CFDIs are downloaded, as the SAT does not allow cancelled XMLs in bulk requests.
+
+```bash
+python3.13 sat_descarga_masiva.py \
+  --rfc VAVC930829LJ1 \
+  --cer ~/certs/fiel.cer \
+  --key ~/certs/fiel.key \
+  --inicio 2025-12-01 \
+  --fin 2025-12-31 \
+  --tipo recibidos \
+  --solicitud CFDI \
+  --intervalo 30
+```
+
+### Utility Mode — Reveal Cache
+
+Decrypts and displays the request history for a specific RFC or all RFCs. Requires `SAT_CACHE_SALT` to be set. Does not require FIEL files.
+
+```bash
+# Single RFC
+python3.13 sat_descarga_masiva.py --reveal-cache VAVC930829LJ1
+
+# All RFCs in cache
+python3.13 sat_descarga_masiva.py --reveal-cache all
+```
+
+Example output:
+
+```
+=================================================================
+CACHÉ DESCIFRADO — VAVC930829LJ1
+=================================================================
+  Período  : 2025-12-01 → 2025-12-31 (recibidos)
+  Intentos : 3
+  Último   : 2026-04-03 16:53:22
+  Próximo offset : +3s → inicio efectivo 2025-12-01 00:00:03
 ```
 
 ### All Arguments
 
-| Argument | Required | Default | Description |
-|---|---|---|---|
-| `--rfc` | ✔ | — | RFC of the taxpayer |
-| `--cer` | ✔ | — | Path to the FIEL `.cer` file |
-| `--key` | ✔ | — | Path to the FIEL `.key` file |
-| `--password` | ✔ | — | FIEL private key password |
-| `--inicio` | ✔ | — | Start date `YYYY-MM-DD` |
-| `--fin` | ✔ | — | End date `YYYY-MM-DD` |
-| `--tipo` | | `recibidos` | `emitidos` or `recibidos` |
-| `--solicitud` | | `CFDI` | `CFDI` (full XML) or `Metadata` (summary TXT) |
-| `--output` | | `./xml_sat` | Output folder path |
-| `--intervalo` | | `60` | Seconds between verification polling attempts |
+| Argument         | Required | Default         | Description                                                                                             |
+| ---------------- | -------- | --------------- | ------------------------------------------------------------------------------------------------------- |
+| `--rfc`          | ✔        | —               | RFC of the taxpayer                                                                                     |
+| `--cer`          | ✔        | —               | Path to the FIEL `.cer` file                                                                            |
+| `--key`          | ✔        | —               | Path to the FIEL `.key` file                                                                            |
+| `--password`     |          | prompt          | FIEL password. If omitted, prompted securely (recommended for passwords with spaces)                    |
+| `--inicio`       | ✔        | —               | Start date `YYYY-MM-DD`                                                                                 |
+| `--fin`          | ✔        | —               | End date `YYYY-MM-DD`                                                                                   |
+| `--tipo`         |          | `recibidos`     | `emitidos` or `recibidos`                                                                               |
+| `--solicitud`    |          | `CFDI`          | `CFDI` (full XML) or `Metadata` (summary TXT)                                                           |
+| `--excel`        |          | —               | `resumen`, `detalle`, or `completo` — generate Excel from downloaded XMLs (CFDI mode only, coming soon) |
+| `--output`       |          | `./results_RFC` | Base output folder. Subfolders are created automatically                                                |
+| `--intervalo`    |          | `60`            | Seconds between SAT polling attempts (minimum: 10)                                                      |
+| `--reveal-cache` |          | —               | `RFC` or `all` — decrypt and display request history                                                    |
 
 ---
 
 ## Output Structure
 
 ```
-xml_sat/
-├── <package_id_1>.zip
-│   └── <package_id_1>/
-│       ├── uuid-1.xml
-│       ├── uuid-2.xml
+results_VAVC930829LJ1/
+├── metadata/
+│   └── 2026-04-03/
+│       ├── 2025-01-VAVC930829LJ1.txt
+│       ├── 2025-02-VAVC930829LJ1.txt
 │       └── ...
-├── <package_id_2>.zip
-│   └── <package_id_2>/
-│       └── ...
-└── ...
+└── cfdi/
+    └── 2026-04-03/
+        ├── 2025-12-VAVC930829LJ1.zip    ← renamed, preserved
+        └── 2025-12-VAVC930829LJ1/
+            ├── uuid-1.xml
+            ├── uuid-2.xml
+            └── ...
+
+.cache/
+└── VAVC930829LJ1.enc                    ← encrypted request history
+
+sat_descarga.log                         ← full execution log
 ```
 
-- Each SAT package is saved as a `.zip` file.
-- XML files are extracted into a subfolder named after the package ID.
-- File names match the UUID of each CFDI for easy lookup.
+If the same date folder already exists (running the script twice on the same day), files are overwritten silently and a warning is logged.
+
+---
+
+## Encrypted Cache
+
+The script maintains an encrypted request history in `.cache/RFC.enc` for each RFC. This file:
+
+- Is encrypted with **Fernet (AES-128-CBC)** using a key derived via **PBKDF2-SHA256** from `SAT_CACHE_SALT` + the RFC
+- Cannot be read or modified without knowing `SAT_CACHE_SALT`
+- If tampered with manually, the script detects the corruption and resets it automatically
+- Is never committed to the repository (add `.cache/` to `.gitignore`)
+
+The recommended `.gitignore` entries:
+
+```
+.env
+.cache/
+libs/
+results_*/
+sat_descarga.log
+```
+
+---
+
+## Duplicate Request Protection
+
+The SAT permanently blocks a combination of `RFC + start date + end date + type` after 2 identical CFDI requests (error 5002). This script handles this automatically:
+
+- The cache tracks how many times each period has been requested
+- On each CFDI request, the start datetime is offset by +1 second per prior attempt:
+  - Attempt 1: `2025-12-01 00:00:00`
+  - Attempt 2: `2025-12-01 00:00:01`
+  - Attempt 3: `2025-12-01 00:00:02`
+- Since the SAT compares exact datetime values, each request is technically a new period
+- This means the blocking risk is eliminated for normal usage
+
+This protection only applies to CFDI mode. Metadata mode has no duplicate restrictions.
 
 ---
 
 ## Logging
 
-Every step is logged with a timestamp, level, and descriptive message. Logs are written simultaneously to:
-
-- **stdout** — visible in the terminal in real time
-- **`sat_descarga.log`** — persisted in the working directory for auditing
-
-Log format:
+Every step is logged with a timestamp, level, and descriptive message. Logs are written simultaneously to stdout and `sat_descarga.log`.
 
 ```
-2025-03-28 14:05:01 │ INFO     │ Solicitando token de autenticación al SAT (intento 1/3)...
-2025-03-28 14:05:02 │ INFO     │ ✔ Token obtenido. La sesión con el SAT está activa.
-2025-03-28 14:05:03 │ INFO     │ Enviando solicitud al Web Service del SAT...
-2025-03-28 14:05:04 │ INFO     │ ✔ Solicitud aceptada por el SAT.
-2025-03-28 14:05:04 │ INFO     │   ID de solicitud : abc123-...
+2026-04-03 16:50:42 │ INFO     │ SAT — DESCARGA MASIVA DE CFDI (XML)
+2026-04-03 16:50:42 │ INFO     │ Validando parámetros antes de iniciar el proceso...
+2026-04-03 16:50:42 │ INFO     │ ✔ Todos los parámetros son válidos.
+2026-04-03 16:50:42 │ INFO     │ Caché: primera solicitud para este período.
+2026-04-03 16:50:42 │ INFO     │   Período efectivo : 2025-12-01 00:00:00 → 2025-12-31 23:59:59
+2026-04-03 16:50:43 │ INFO     │ ✔ Token obtenido. Sesión activa con el SAT.
+2026-04-03 16:50:43 │ INFO     │ ✔ Solicitud aceptada. ID: 3a4341a7-81d6-4830-...
 ```
 
 ---
 
 ## Error Handling
 
-| Scenario | Behavior |
-|---|---|
-| Invalid file paths or date ranges | Fail-fast before any SAT call |
-| Wrong FIEL password or corrupt files | Clear error message, exit |
-| SAT authentication failure | Auto-retry up to 3 times with delay |
-| SAT request rejected (error 5002) | Explains the duplicate period rule |
-| Package download failure | Retries up to 3 times, skips and continues if exhausted |
-| Corrupt ZIP file | Logs the issue, skips extraction, continues |
-| `Ctrl+C` interrupt | Graceful exit, preserves already-downloaded files |
-| Unhandled exception | Full stack trace in `sat_descarga.log` |
+| Scenario                                    | Behavior                                                   |
+| ------------------------------------------- | ---------------------------------------------------------- |
+| `SAT_CACHE_SALT` not defined                | Fail immediately with setup instructions                   |
+| Invalid file paths or date ranges           | Fail-fast before any SAT call, list all errors             |
+| Date range older than 6 years               | Fail-fast with the exact allowed start date                |
+| Wrong FIEL password or corrupt files        | Clear error message, exit                                  |
+| SAT authentication failure                  | Auto-retry up to 3 times with 5s delay                     |
+| SAT request rejected (301 — cancelled XMLs) | Uses `estado_comprobante=Vigente` automatically            |
+| SAT request rejected (5002 — duplicate)     | Prevented by automatic datetime offset bypass              |
+| SAT request rejected (5004 — no CFDIs)      | Metadata: continues to next month. CFDI: exits cleanly     |
+| Polling timeout or network error            | Retries indefinitely until SAT responds or user interrupts |
+| Package download failure                    | Retries up to 3 times, skips and continues if exhausted    |
+| Corrupt ZIP file                            | Logs the issue, skips extraction, continues                |
+| Tampered cache file                         | Detected automatically, cache reset for that RFC           |
+| `Ctrl+C` interrupt                          | Graceful exit, preserves all downloaded files              |
+| Unhandled exception                         | Full stack trace in `sat_descarga.log`                     |
 
 ---
 
@@ -205,12 +313,12 @@ Log format:
 
 > These are limitations imposed by the SAT Web Service, not by this script.
 
-- **Date range limit:** The SAT only allows downloading CFDI from the last **6 years**. Requests older than that will be rejected.
-- **Duplicate period rule:** Do **not** submit the same RFC + date range combination more than twice. On the third attempt the SAT permanently blocks that period with error `5002`. If you hit this, shift the start or end date by at least one second.
-- **No sandbox:** There is no test environment. All requests use real FIEL credentials and count against your SAT quota.
-- **Processing time:** The SAT may take anywhere from a few minutes to 72 hours to process a request, depending on server load. The script polls automatically.
-- **Package size:** Each request can return up to 200,000 XML files split across multiple packages. For very large date ranges, consider splitting into monthly requests.
-- **Received + cancelled:** For received CFDI, the SAT only provides `Metadata` for cancelled documents — not the full XML.
+- **Date range limit:** The SAT only allows downloading CFDI from the last **6 years**. Requests older than that are rejected automatically before submission.
+- **No sandbox:** There is no test environment. All requests use real FIEL credentials.
+- **Processing time:** The SAT may take anywhere from a few minutes to 72 hours depending on server load. The script polls automatically.
+- **Package size:** Each request can return up to 200,000 XML files split across multiple packages.
+- **Cancelled received CFDIs:** For received CFDI, the SAT does not allow downloading cancelled XMLs in bulk — only `Metadata` is available for cancelled documents.
+- **Metadata has no duplicate restrictions:** You can request the same Metadata period as many times as needed.
 
 ---
 
@@ -222,4 +330,4 @@ This tool consumes the SAT's official Web Service directly. It is your responsib
 
 ## License
 
-GNU GPLv3
+GNU GPL v3
