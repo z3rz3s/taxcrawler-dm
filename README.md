@@ -1,4 +1,4 @@
-# sat-descarga-masiva
+# tax-crawler-dm
 
 A zero-cost, open-source Python script to bulk-download CFDI (XML invoices) directly from the Mexican Tax Administration Service (SAT) Web Service v1.5 — no third-party APIs, no subscriptions, no recurring fees.
 
@@ -72,7 +72,7 @@ The script follows the official SAT Web Service flow through independent functio
 
 ## Requirements
 
-- Python 3.13 (recommended — tested and verified)
+- Python 3.13 or upper (recommended — tested and verified)
 - A valid **FIEL (e.firma)** issued by the SAT:
   - `.cer` — public certificate file
   - `.key` — private key file
@@ -130,7 +130,7 @@ The script will fail with clear instructions if `SAT_CACHE_SALT` is not defined 
 Run without arguments. The script will prompt for each parameter, validate file paths in real time, and hide the FIEL password input.
 
 ```bash
-python3.13 sat_descarga_masiva.py
+python descarga_masiva.py
 ```
 
 ### CLI Mode — Metadata
@@ -138,10 +138,11 @@ python3.13 sat_descarga_masiva.py
 Downloads lightweight TXT summary files, one per month. ZIPs are automatically deleted after extraction. Safe to run repeatedly — no blocking risk.
 
 ```bash
-python3.13 sat_descarga_masiva.py \
-  --rfc VAVC930829LJ1 \
+python descarga_masiva.py \
+  --rfc ABCD010203EF1 \
   --cer ~/certs/fiel.cer \
   --key ~/certs/fiel.key \
+  --password "YOUR_PASSWORD" \
   --inicio 2024-01-01 \
   --fin 2024-12-31 \
   --tipo recibidos \
@@ -154,12 +155,13 @@ python3.13 sat_descarga_masiva.py \
 Downloads full XML files for the specified date range. The encrypted cache automatically applies a datetime offset on each run to prevent SAT permanent blocking. Only active (non-cancelled) received CFDIs are downloaded, as the SAT does not allow cancelled XMLs in bulk requests.
 
 ```bash
-python3.13 sat_descarga_masiva.py \
-  --rfc VAVC930829LJ1 \
+python descarga_masiva.py \
+  --rfc ABCD010203EF1 \
   --cer ~/certs/fiel.cer \
   --key ~/certs/fiel.key \
   --inicio 2025-12-01 \
   --fin 2025-12-31 \
+  --password "YOUR_PASSWORD" \
   --tipo recibidos \
   --solicitud CFDI \
   --intervalo 30
@@ -171,17 +173,17 @@ Decrypts and displays the request history for a specific RFC or all RFCs. Requir
 
 ```bash
 # Single RFC
-python3.13 sat_descarga_masiva.py --reveal-cache VAVC930829LJ1
+python descarga_masiva.py --reveal-cache ABCD010203EF1
 
 # All RFCs in cache
-python3.13 sat_descarga_masiva.py --reveal-cache all
+python descarga_masiva.py --reveal-cache all
 ```
 
 Example output:
 
 ```
 =================================================================
-CACHÉ DESCIFRADO — VAVC930829LJ1
+CACHÉ DESCIFRADO — ABCD010203EF1
 =================================================================
   Período  : 2025-12-01 → 2025-12-31 (recibidos)
   Intentos : 3
@@ -211,22 +213,22 @@ CACHÉ DESCIFRADO — VAVC930829LJ1
 ## Output Structure
 
 ```
-results_VAVC930829LJ1/
+results_ABCD010203EF1/
 ├── metadata/
 │   └── 2026-04-03/
-│       ├── 2025-01-VAVC930829LJ1.txt
-│       ├── 2025-02-VAVC930829LJ1.txt
+│       ├── 2025-01-ABCD010203EF1.txt
+│       ├── 2025-02-ABCD010203EF1.txt
 │       └── ...
 └── cfdi/
     └── 2026-04-03/
-        ├── 2025-12-VAVC930829LJ1.zip    ← renamed, preserved
+        ├── 2025-12-ABCD010203EF1.zip    ← renamed, preserved
         └── 2025-12-VAVC930829LJ1/
             ├── uuid-1.xml
             ├── uuid-2.xml
             └── ...
 
 .cache/
-└── VAVC930829LJ1.enc                    ← encrypted request history
+└── ABCD010203EF1.enc                    ← encrypted request history
 
 sat_descarga.log                         ← full execution log
 ```
@@ -330,4 +332,4 @@ This tool consumes the SAT's official Web Service directly. It is your responsib
 
 ## License
 
-GNU GPL v3
+[GNU GPL v3](./LICENSE)
