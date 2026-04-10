@@ -1,13 +1,13 @@
 # Script Flows
 
-This document describes every execution flow available in `sat_descarga_masiva.py`.
+This document describes every execution flow available in `descarga_masiva.py`.
 
 ---
 
 ## Flow 1 — Metadata Download
 
 ```bash
-python sat_descarga_masiva.py --rfc RFC --cer fiel.cer --key fiel.key \
+python descarga_masiva.py --rfc RFC --cer fiel.cer --key fiel.key \
   --inicio 2025-01-01 --fin 2025-12-31 --solicitud Metadata
 ```
 
@@ -27,7 +27,7 @@ python sat_descarga_masiva.py --rfc RFC --cer fiel.cer --key fiel.key \
 ## Flow 2 — CFDI Download
 
 ```bash
-python sat_descarga_masiva.py --rfc RFC --cer fiel.cer --key fiel.key \
+python descarga_masiva.py --rfc RFC --cer fiel.cer --key fiel.key \
   --inicio 2025-12-01 --fin 2025-12-31 --solicitud CFDI --timeout 60
 ```
 
@@ -49,7 +49,7 @@ python sat_descarga_masiva.py --rfc RFC --cer fiel.cer --key fiel.key \
 ## Flow 3 — View Pending Requests
 
 ```bash
-python sat_descarga_masiva.py --pendientes
+python descarga_masiva.py --pendientes
 ```
 
 1. Validates `SAT_CACHE_SALT`
@@ -61,7 +61,7 @@ python sat_descarga_masiva.py --pendientes
 ## Flow 4 — Resume a Single Request
 
 ```bash
-python sat_descarga_masiva.py --retomar ID
+python descarga_masiva.py --retomar ID
 ```
 
 1. Validates `SAT_CACHE_SALT`
@@ -77,8 +77,8 @@ python sat_descarga_masiva.py --retomar ID
 ## Flow 5 — Resume All Pending Requests
 
 ```bash
-python sat_descarga_masiva.py --retomar-todas all
-python sat_descarga_masiva.py --retomar-todas VAVC930829LJ1
+python descarga_masiva.py --retomar-todas all
+python descarga_masiva.py --retomar-todas VAVC930829LJ1
 ```
 
 1. Validates `SAT_CACHE_SALT`
@@ -91,7 +91,7 @@ python sat_descarga_masiva.py --retomar-todas VAVC930829LJ1
 
 ```bash
 # Cron example: check pending every hour
-0 * * * * cd /path/to/project && python sat_descarga_masiva.py --retomar-todas all
+0 * * * * cd /path/to/project && python descarga_masiva.py --retomar-todas all
 ```
 
 ---
@@ -99,8 +99,8 @@ python sat_descarga_masiva.py --retomar-todas VAVC930829LJ1
 ## Flow 6 — Reveal Request History (Cache)
 
 ```bash
-python sat_descarga_masiva.py --reveal-cache VAVC930829LJ1
-python sat_descarga_masiva.py --reveal-cache all
+python descarga_masiva.py --reveal-cache VAVC930829LJ1
+python descarga_masiva.py --reveal-cache all
 ```
 
 1. Validates `SAT_CACHE_SALT`
@@ -112,7 +112,7 @@ python sat_descarga_masiva.py --reveal-cache all
 ## Flow 7 — View RFC Profile
 
 ```bash
-python sat_descarga_masiva.py --perfil VAVC930829LJ1
+python descarga_masiva.py --perfil VAVC930829LJ1
 ```
 
 1. Validates `SAT_CACHE_SALT`
@@ -125,7 +125,7 @@ python sat_descarga_masiva.py --perfil VAVC930829LJ1
 ## Flow 8 — Interactive Mode
 
 ```bash
-python sat_descarga_masiva.py
+python descarga_masiva.py
 ```
 
 1. Prompts for each parameter one by one with real-time validation

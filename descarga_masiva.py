@@ -132,6 +132,7 @@ MAX_REINTENTOS_DESCARGA = 3
 PAUSA_ENTRE_REINTENTOS  = 5
 CACHE_DIR               = Path(__file__).resolve().parent / ".cache"
 TIMEOUT_DEFAULT_MIN     = None   # None = sin límite
+TIMEOUT_RETOMAR_MIN     = 30     # default para --retomar y --retomar-todas
 
 
 # ===========================================================================
@@ -515,7 +516,7 @@ def mostrar_pendientes() -> None:
 # ===========================================================================
 
 def verificar_con_timeout(fiel: Fiel, id_solicitud: str, p: dict,
-                           timeout_min: int | None = None) -> list[str] | None:
+                           timeout_min: int | None = None) -> list[str] | str | None:
     """
     Polling hasta que la solicitud esté lista o se agote el timeout.
 
@@ -656,10 +657,13 @@ def retomar_solicitud(id_solicitud: str, fiel: Fiel, timeout_min: int | None) ->
             rfc  = rfc_candidato
             break
 
-    if not info:
+    if not info or rfc is None:
         log.error(f"✗ ID no encontrado en ningún archivo de pendientes: {id_solicitud}")
         log.error("  Usa --pendientes para ver las solicitudes disponibles.")
         return False
+
+    # A partir de aquí rfc es str garantizado — Pylance lo infiere correctamente
+    rfc = str(rfc)
 
     creado       = info.get("creado", "—")
     transcurrido = _tiempo_transcurrido(creado)
@@ -1358,35 +1362,168 @@ def parse_args() -> dict | None:
     if len(sys.argv) == 1:
         return None
 
-    p = argparse.ArgumentParser(description="Descarga masiva de CFDI (XML) del SAT")
+    p = argparse.ArgumentParser(
+        prog="descarga_masiva.py",
+        description=(
+            "taxcrawler-dm — Descarga masiva de CFDI (XML) del SAT\n"
+            "Consume el Web Service oficial del SAT v1.5 sin APIs de terceros.\n"
+            "\n"
+            "Ejemplos:\n"
+            "  %(prog)s --rfc XAXX010101000 --cer fiel.cer --key fiel.key --inicio 2025-01-01 --fin 2025-12-31 --solicitud Metadata\n"
+            "  %(prog)s --rfc XAXX010101000 --inicio 2025-12-01 --fin 2025-12-31 --solicitud CFDI --timeout 60\n"
+            "  %(prog)s --pendientes\n"
+            "  %(prog)s --retomar 3a4341a7-81d6-4830-9210-bf02f46085e0\n"
+            "  %(prog)s --retomar-todas all\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Documentación completa:\n"
+            "  FLOWS.md   — descripción de cada flujo de ejecución\n"
+            "  ROADMAP.md — estado actual y funcionalidades planeadas\n"
+            "\n"
+            "Variables de entorno requeridas (.env):\n"
+            "  SAT_CACHE_SALT           — salt para encriptar el caché (obligatorio)\n"
+            "  SAT_PASSWORD_RFC         — contraseña FIEL del RFC (opcional, para automatización)\n"
+        ),
+    )
 
-    # Modos utilitarios
-    p.add_argument("--reveal-cache",   metavar="RFC|all",  default=None,
-                   help="Descifra y muestra el historial de intentos.")
-    p.add_argument("--perfil",         metavar="RFC",       default=None,
-                   help="Muestra el perfil guardado de un RFC (rutas FIEL, output, intervalo).")
-    p.add_argument("--pendientes",     action="store_true", default=False,
-                   help="Muestra todas las solicitudes pendientes.")
-    p.add_argument("--retomar",        metavar="ID",        default=None,
-                   help="Retoma el polling de una solicitud específica por ID.")
-    p.add_argument("--retomar-todas",  metavar="RFC|all",   default=None,
-                   help="Retoma en secuencia todas las solicitudes pendientes.")
+    # -----------------------------------------------------------------------
+    # Modos utilitarios — no requieren --rfc ni FIEL (excepto --retomar*)
+    # -----------------------------------------------------------------------
+    grupo_util = p.add_argument_group("modos utilitarios")
+    grupo_util.add_argument(
+        "--pendientes",
+        action="store_true", default=False,
+        help="Muestra todas las solicitudes CFDI pendientes de descarga en todos los RFCs."
+    )
+    grupo_util.add_argument(
+        "--retomar",
+        metavar="ID",
+        default=None,
+        help=(
+            "Retoma el polling de una solicitud pendiente por su ID. "
+            "Las rutas de FIEL se leen del perfil guardado automáticamente. "
+            "Timeout default: %(default)s min (configurable con --timeout)."
+        )
+    )
+    grupo_util.add_argument(
+        "--retomar-todas",
+        metavar="RFC|all",
+        default=None,
+        help=(
+            "Retoma en secuencia todas las solicitudes pendientes de un RFC o de todos. "
+            "Pide la contraseña una sola vez por RFC por sesión. "
+            "Útil como tarea de cron: '0 * * * * python descarga_masiva.py --retomar-todas all'."
+        )
+    )
+    grupo_util.add_argument(
+        "--perfil",
+        metavar="RFC",
+        default=None,
+        help="Muestra el perfil guardado de un RFC: rutas .cer/.key, output, intervalo y fecha de guardado."
+    )
+    grupo_util.add_argument(
+        "--reveal-cache",
+        metavar="RFC|all",
+        default=None,
+        help="Descifra y muestra el historial de intentos y offsets de bypass del SAT para un RFC o todos."
+    )
 
-    # Parámetros de descarga
-    p.add_argument("--rfc",       default=None)
-    p.add_argument("--cer",       type=Path, default=None)
-    p.add_argument("--key",       type=Path, default=None)
-    p.add_argument("--password",  default=None,
-                   help="Contraseña FIEL. Si se omite, se pedirá de forma segura.")
-    p.add_argument("--inicio",    type=date.fromisoformat, default=None)
-    p.add_argument("--fin",       type=date.fromisoformat, default=None)
-    p.add_argument("--tipo",      choices=["emitidos", "recibidos"], default="recibidos")
-    p.add_argument("--solicitud", choices=["CFDI", "Metadata"],      default="CFDI")
-    p.add_argument("--excel",     choices=["resumen", "detalle", "completo"], default=None)
-    p.add_argument("--timeout",   type=int, default=None,
-                   help="Minutos máximos de espera al SAT (default: sin límite).")
-    p.add_argument("--output",    type=Path, default=None)
-    p.add_argument("--intervalo", type=int,  default=60)
+    # -----------------------------------------------------------------------
+    # Parámetros de descarga — para Metadata y CFDI
+    # -----------------------------------------------------------------------
+    grupo_desc = p.add_argument_group("descarga")
+    grupo_desc.add_argument(
+        "--rfc",
+        metavar="RFC",
+        default=None,
+        help="RFC del contribuyente (obligatorio para descarga). Ejemplo: XAXX010101000."
+    )
+    grupo_desc.add_argument(
+        "--cer",
+        type=Path, default=None,
+        metavar="RUTA",
+        help=(
+            "Ruta al archivo .cer de la FIEL. "
+            "Opcional si ya existe un perfil guardado para este RFC."
+        )
+    )
+    grupo_desc.add_argument(
+        "--key",
+        type=Path, default=None,
+        metavar="RUTA",
+        help=(
+            "Ruta al archivo .key de la FIEL. "
+            "Opcional si ya existe un perfil guardado para este RFC."
+        )
+    )
+    grupo_desc.add_argument(
+        "--password",
+        default=None,
+        metavar="PASS",
+        help=(
+            "Contraseña de la FIEL. Si se omite, se solicita de forma segura (oculta). "
+            "Para automatización define SAT_PASSWORD_RFC en .env."
+        )
+    )
+    grupo_desc.add_argument(
+        "--inicio",
+        type=date.fromisoformat, default=None,
+        metavar="YYYY-MM-DD",
+        help="Fecha de inicio del período a descargar. El SAT permite hasta 6 años atrás."
+    )
+    grupo_desc.add_argument(
+        "--fin",
+        type=date.fromisoformat, default=None,
+        metavar="YYYY-MM-DD",
+        help="Fecha de fin del período a descargar."
+    )
+    grupo_desc.add_argument(
+        "--tipo",
+        choices=["emitidos", "recibidos"], default="recibidos",
+        help="Tipo de CFDI a descargar. Default: %(default)s."
+    )
+    grupo_desc.add_argument(
+        "--solicitud",
+        choices=["CFDI", "Metadata"], default="CFDI",
+        help=(
+            "Tipo de solicitud. "
+            "CFDI: descarga XMLs completos (solo vigentes). "
+            "Metadata: descarga resumen TXT por mes, sin límite de reintentos. "
+            "Default: %(default)s."
+        )
+    )
+    grupo_desc.add_argument(
+        "--timeout",
+        type=int, default=None,
+        metavar="MINUTOS",
+        help=(
+            "Minutos máximos de espera al SAT antes de guardar como pendiente. "
+            "Sin --timeout: espera indefinida en descarga normal, "
+            f"30 min en --retomar y --retomar-todas."
+        )
+    )
+    grupo_desc.add_argument(
+        "--output",
+        type=Path, default=None,
+        metavar="RUTA",
+        help=(
+            "Carpeta base de salida. "
+            "Se crean subcarpetas automáticamente: results_RFC/metadata|cfdi/YYYY-MM-DD/. "
+            "Default: ./results_RFC."
+        )
+    )
+    grupo_desc.add_argument(
+        "--intervalo",
+        type=int, default=60,
+        metavar="SEG",
+        help="Segundos entre cada verificación de estado al SAT. Mínimo: 10. Default: %(default)s."
+    )
+    grupo_desc.add_argument(
+        "--excel",
+        choices=["resumen", "detalle", "completo"], default=None,
+        help="[Próximamente] Genera un Excel con los XMLs descargados. Solo en modo CFDI."
+    )
 
     args = p.parse_args()
 
@@ -1456,9 +1593,9 @@ def parse_args() -> dict | None:
         fiel = cargar_fiel(args.cer, args.key, password)
 
         if args.retomar:
-            retomar_solicitud(args.retomar, fiel, args.timeout)
+            retomar_solicitud(args.retomar, fiel, args.timeout or TIMEOUT_RETOMAR_MIN)
         else:
-            retomar_todas(args.retomar_todas, args.timeout)
+            retomar_todas(args.retomar_todas, args.timeout or TIMEOUT_RETOMAR_MIN)
         sys.exit(0)
 
     # --- Modo: descarga normal ---
