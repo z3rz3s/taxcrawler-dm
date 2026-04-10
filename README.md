@@ -25,6 +25,7 @@ A zero-cost, open-source Python script to bulk-download CFDI (XML invoices) dire
 - [Logging](#logging)
 - [Error Handling](#error-handling)
 - [Important SAT Constraints](#important-sat-constraints)
+- [Documentation](#documentation)
 - [Disclaimer](#disclaimer)
 
 ---
@@ -123,7 +124,7 @@ openssl rand -base64 32
 **Optional — password automation for cron jobs:**
 
 ```
-SAT_PASSWORD_VAVC930829LJ1=your_fiel_password
+SAT_PASSWORD_XAXX010101000=your_fiel_password
 ```
 
 If defined, the script uses it automatically instead of prompting. The password is never stored in any file — only read from the environment at runtime.
@@ -141,7 +142,7 @@ The script will fail with clear setup instructions if `SAT_CACHE_SALT` is not de
 Run without arguments. The script prompts for each parameter, validates file paths in real time, hides the FIEL password, and auto-fills values from a saved RFC profile if one exists.
 
 ```bash
-python3.13 sat_descarga_masiva.py
+python sat_descarga_masiva.py
 ```
 
 ### CLI Mode — Metadata
@@ -149,8 +150,8 @@ python3.13 sat_descarga_masiva.py
 Downloads lightweight TXT summary files, one per month. ZIPs are automatically deleted after extraction. Safe to run repeatedly — no blocking risk.
 
 ```bash
-python3.13 sat_descarga_masiva.py \
-  --rfc VAVC930829LJ1 \
+python sat_descarga_masiva.py \
+  --rfc XAXX010101000 \
   --cer ~/certs/fiel.cer \
   --key ~/certs/fiel.key \
   --inicio 2024-01-01 \
@@ -165,8 +166,8 @@ python3.13 sat_descarga_masiva.py \
 Downloads full XML files. The encrypted cache automatically applies a datetime offset on each run to prevent SAT permanent blocking.
 
 ```bash
-python3.13 sat_descarga_masiva.py \
-  --rfc VAVC930829LJ1 \
+python sat_descarga_masiva.py \
+  --rfc XAXX010101000 \
   --cer ~/certs/fiel.cer \
   --key ~/certs/fiel.key \
   --inicio 2025-12-01 \
@@ -180,8 +181,8 @@ python3.13 sat_descarga_masiva.py \
 After the first successful run, `--cer`, `--key`, and `--output` are optional — the script reads them from the saved RFC profile:
 
 ```bash
-python3.13 sat_descarga_masiva.py \
-  --rfc VAVC930829LJ1 \
+python sat_descarga_masiva.py \
+  --rfc XAXX010101000 \
   --inicio 2025-01-01 \
   --fin 2025-06-30
 ```
@@ -190,67 +191,67 @@ python3.13 sat_descarga_masiva.py \
 
 ```bash
 # View all pending requests across all RFCs
-python3.13 sat_descarga_masiva.py --pendientes
+python sat_descarga_masiva.py --pendientes
 
 # Resume a specific pending request by ID
-python3.13 sat_descarga_masiva.py --retomar 3a4341a7-81d6-4830-9210-bf02f46085e0
+python sat_descarga_masiva.py --retomar 3a4341a7-81d6-4830-9210-bf02f46085e0
 
 # Resume all pending requests (one RFC at a time, one password per RFC)
-python3.13 sat_descarga_masiva.py --retomar-todas all
-python3.13 sat_descarga_masiva.py --retomar-todas VAVC930829LJ1
+python sat_descarga_masiva.py --retomar-todas all
+python sat_descarga_masiva.py --retomar-todas XAXX010101000
 
 # Inspect saved RFC profile
-python3.13 sat_descarga_masiva.py --perfil VAVC930829LJ1
+python sat_descarga_masiva.py --perfil XAXX010101000
 
 # Inspect encrypted request history
-python3.13 sat_descarga_masiva.py --reveal-cache VAVC930829LJ1
-python3.13 sat_descarga_masiva.py --reveal-cache all
+python sat_descarga_masiva.py --reveal-cache XAXX010101000
+python sat_descarga_masiva.py --reveal-cache all
 ```
 
 ### All Arguments
 
-| Argument          | Required    | Default         | Description                                                                  |
-| ----------------- | ----------- | --------------- | ---------------------------------------------------------------------------- |
-| `--rfc`           | ✔           | —               | RFC of the taxpayer                                                          |
-| `--cer`           | ✔ first run | from profile    | Path to the FIEL `.cer` file                                                 |
-| `--key`           | ✔ first run | from profile    | Path to the FIEL `.key` file                                                 |
-| `--password`      |             | prompt / env    | FIEL password. If omitted, prompted securely or read from `SAT_PASSWORD_RFC` |
-| `--inicio`        | ✔           | —               | Start date `YYYY-MM-DD`                                                      |
-| `--fin`           | ✔           | —               | End date `YYYY-MM-DD`                                                        |
-| `--tipo`          |             | `recibidos`     | `emitidos` or `recibidos`                                                    |
-| `--solicitud`     |             | `CFDI`          | `CFDI` (full XML) or `Metadata` (summary TXT)                                |
-| `--timeout`       |             | no limit        | Max minutes to wait for SAT response before saving as pending                |
-| `--excel`         |             | —               | `resumen`, `detalle`, or `completo` — Excel export (CFDI only, coming soon)  |
-| `--output`        |             | `./results_RFC` | Base output folder                                                           |
-| `--intervalo`     |             | `60`            | Seconds between SAT polling attempts (min: 10)                               |
-| `--pendientes`    |             | —               | Show all pending requests                                                    |
-| `--retomar`       |             | —               | Resume a pending request by ID                                               |
-| `--retomar-todas` |             | —               | Resume all pending requests for `RFC` or `all`                               |
-| `--perfil`        |             | —               | Show saved RFC profile                                                       |
-| `--reveal-cache`  |             | —               | Decrypt and display request history for `RFC` or `all`                       |
+| Argument | Required | Default | Description |
+|---|---|---|---|
+| `--rfc` | ✔ | — | RFC of the taxpayer |
+| `--cer` | ✔ first run | from profile | Path to the FIEL `.cer` file |
+| `--key` | ✔ first run | from profile | Path to the FIEL `.key` file |
+| `--password` | | prompt / env | FIEL password. If omitted, prompted securely or read from `SAT_PASSWORD_RFC` |
+| `--inicio` | ✔ | — | Start date `YYYY-MM-DD` |
+| `--fin` | ✔ | — | End date `YYYY-MM-DD` |
+| `--tipo` | | `recibidos` | `emitidos` or `recibidos` |
+| `--solicitud` | | `CFDI` | `CFDI` (full XML) or `Metadata` (summary TXT) |
+| `--timeout` | | no limit | Max minutes to wait for SAT response before saving as pending |
+| `--excel` | | — | `resumen`, `detalle`, or `completo` — Excel export (CFDI only, coming soon) |
+| `--output` | | `./results_RFC` | Base output folder |
+| `--intervalo` | | `60` | Seconds between SAT polling attempts (min: 10) |
+| `--pendientes` | | — | Show all pending requests |
+| `--retomar` | | — | Resume a pending request by ID |
+| `--retomar-todas` | | — | Resume all pending requests for `RFC` or `all` |
+| `--perfil` | | — | Show saved RFC profile |
+| `--reveal-cache` | | — | Decrypt and display request history for `RFC` or `all` |
 
 ---
 
 ## Output Structure
 
 ```
-results_VAVC930829LJ1/
+results_XAXX010101000/
 ├── metadata/
 │   └── 2026-04-09/
-│       ├── 2025-01-VAVC930829LJ1.txt
-│       ├── 2025-02-VAVC930829LJ1.txt
+│       ├── 2025-01-XAXX010101000.txt
+│       ├── 2025-02-XAXX010101000.txt
 │       └── ...
 └── cfdi/
     └── 2026-04-09/
-        ├── 2025-12-VAVC930829LJ1.zip    ← renamed, preserved
-        └── 2025-12-VAVC930829LJ1/
+        ├── 2025-12-XAXX010101000.zip    ← renamed, preserved
+        └── 2025-12-XAXX010101000/
             ├── uuid-1.xml
             └── ...
 
 .cache/
-├── VAVC930829LJ1.enc            ← encrypted request history
-├── VAVC930829LJ1.pending.enc    ← encrypted pending requests
-└── VAVC930829LJ1.profile.enc    ← encrypted RFC profile
+├── XAXX010101000.enc            ← encrypted request history
+├── XAXX010101000.pending.enc    ← encrypted pending requests
+└── XAXX010101000.profile.enc    ← encrypted RFC profile
 
 sat_descarga.log                 ← full execution log
 ```
@@ -273,7 +274,7 @@ On subsequent runs, `--cer`, `--key`, and `--output` are filled automatically fr
 To inspect a saved profile:
 
 ```bash
-python3.13 sat_descarga_masiva.py --perfil VAVC930829LJ1
+python sat_descarga_masiva.py --perfil XAXX010101000
 ```
 
 If the FIEL files are moved or deleted, the script warns and asks for the paths explicitly. The profile is updated automatically on the next successful download.
@@ -337,7 +338,7 @@ To automate resumption without manual intervention, add a cron job:
 
 ```bash
 # Resume all pending requests every hour
-0 * * * * cd /path/to/taxcrawler-dm && python3.13 sat_descarga_masiva.py --retomar-todas all
+0 * * * * cd /path/to/taxcrawler-dm && python sat_descarga_masiva.py --retomar-todas all
 ```
 
 ---
@@ -349,7 +350,7 @@ Every step is logged with a timestamp, level, and descriptive message. Logs go s
 ```
 2026-04-09 00:50:42 │ INFO     │ SAT — DESCARGA MASIVA DE CFDI (XML)
 2026-04-09 00:50:42 │ INFO     │ ✔ Todos los parámetros son válidos.
-2026-04-09 00:50:42 │ INFO     │   Perfil encontrado para RFC VAVC930829LJ1.
+2026-04-09 00:50:42 │ INFO     │   Perfil encontrado para RFC XAXX010101000.
 2026-04-09 00:50:42 │ INFO     │   Caché: primera solicitud para este período.
 2026-04-09 00:50:42 │ INFO     │   Período efectivo : 2025-12-01 00:00:00 → 2025-12-31 23:59:59
 2026-04-09 00:50:43 │ INFO     │ ✔ Token obtenido. Sesión activa con el SAT.
@@ -361,25 +362,25 @@ Every step is logged with a timestamp, level, and descriptive message. Logs go s
 
 ## Error Handling
 
-| Scenario                                    | Behavior                                                      |
-| ------------------------------------------- | ------------------------------------------------------------- |
-| `SAT_CACHE_SALT` not defined                | Fail immediately with setup instructions                      |
-| Invalid file paths or date ranges           | Fail-fast before any SAT call, list all errors                |
-| Date range older than 6 years               | Fail-fast with the exact allowed start date                   |
-| Wrong FIEL password or corrupt files        | Clear error message, exit                                     |
-| RFC in `--cer` does not match `--rfc`       | Detected at FIEL load, clear error                            |
-| SAT authentication failure                  | Auto-retry up to 3 times with 5s delay                        |
-| SAT request rejected (301 — cancelled XMLs) | `estado_comprobante=Vigente` applied automatically            |
-| SAT request rejected (5002 — duplicate)     | Prevented by automatic datetime offset bypass                 |
-| SAT request rejected (5004 — no CFDIs)      | Metadata: continues to next month. CFDI: exits cleanly        |
-| Polling timeout                             | Saves request as pending, exits with `--retomar` instructions |
-| Package download failure                    | Retries up to 3 times, skips and continues                    |
-| Corrupt ZIP file                            | Logs the issue, skips extraction, continues                   |
-| Tampered cache file                         | Detected automatically, cache reset for that RFC              |
-| Profile FIEL files moved or deleted         | Warns and asks for `--cer`/`--key` explicitly                 |
-| Incorrect password in `--retomar-todas`     | Skips all requests for that RFC, continues with others        |
-| `Ctrl+C` interrupt                          | Graceful exit, pending requests preserved                     |
-| Unhandled exception                         | Full stack trace in `sat_descarga.log`                        |
+| Scenario | Behavior |
+|---|---|
+| `SAT_CACHE_SALT` not defined | Fail immediately with setup instructions |
+| Invalid file paths or date ranges | Fail-fast before any SAT call, list all errors |
+| Date range older than 6 years | Fail-fast with the exact allowed start date |
+| Wrong FIEL password or corrupt files | Clear error message, exit |
+| RFC in `--cer` does not match `--rfc` | Detected at FIEL load, clear error |
+| SAT authentication failure | Auto-retry up to 3 times with 5s delay |
+| SAT request rejected (301 — cancelled XMLs) | `estado_comprobante=Vigente` applied automatically |
+| SAT request rejected (5002 — duplicate) | Prevented by automatic datetime offset bypass |
+| SAT request rejected (5004 — no CFDIs) | Metadata: continues to next month. CFDI: exits cleanly |
+| Polling timeout | Saves request as pending, exits with `--retomar` instructions |
+| Package download failure | Retries up to 3 times, skips and continues |
+| Corrupt ZIP file | Logs the issue, skips extraction, continues |
+| Tampered cache file | Detected automatically, cache reset for that RFC |
+| Profile FIEL files moved or deleted | Warns and asks for `--cer`/`--key` explicitly |
+| Incorrect password in `--retomar-todas` | Skips all requests for that RFC, continues with others |
+| `Ctrl+C` interrupt | Graceful exit, pending requests preserved |
+| Unhandled exception | Full stack trace in `sat_descarga.log` |
 
 ---
 
@@ -396,6 +397,17 @@ Every step is logged with a timestamp, level, and descriptive message. Logs go s
 
 ---
 
+## Documentation
+
+Additional documentation is available in the repository:
+
+| File | Description |
+|---|---|
+| [FLOWS.md](FLOWS.md) | Step-by-step breakdown of every execution flow with examples and a decision map |
+| [ROADMAP.md](ROADMAP.md) | Current status, planned features, and future ideas |
+
+---
+
 ## Disclaimer
 
 This tool consumes the SAT's official Web Service directly. It is your responsibility to use it in compliance with Mexican tax regulations. The authors are not liable for any misuse, data loss, or regulatory issues arising from the use of this script.
@@ -404,4 +416,4 @@ This tool consumes the SAT's official Web Service directly. It is your responsib
 
 ## License
 
-[GNU GPL v3](./LICENSE)
+[GNU GPL v3](LICENSE)
