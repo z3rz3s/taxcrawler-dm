@@ -142,7 +142,7 @@ The script will fail with clear setup instructions if `SAT_CACHE_SALT` is not de
 Run without arguments. The script prompts for each parameter, validates file paths in real time, hides the FIEL password, and auto-fills values from a saved RFC profile if one exists.
 
 ```bash
-python sat_descarga_masiva.py
+python descarga_masiva.py
 ```
 
 ### CLI Mode — Metadata
@@ -150,7 +150,7 @@ python sat_descarga_masiva.py
 Downloads lightweight TXT summary files, one per month. ZIPs are automatically deleted after extraction. Safe to run repeatedly — no blocking risk.
 
 ```bash
-python sat_descarga_masiva.py \
+python descarga_masiva.py \
   --rfc XAXX010101000 \
   --cer ~/certs/fiel.cer \
   --key ~/certs/fiel.key \
@@ -166,7 +166,7 @@ python sat_descarga_masiva.py \
 Downloads full XML files. The encrypted cache automatically applies a datetime offset on each run to prevent SAT permanent blocking.
 
 ```bash
-python sat_descarga_masiva.py \
+python descarga_masiva.py \
   --rfc XAXX010101000 \
   --cer ~/certs/fiel.cer \
   --key ~/certs/fiel.key \
@@ -181,7 +181,7 @@ python sat_descarga_masiva.py \
 After the first successful run, `--cer`, `--key`, and `--output` are optional — the script reads them from the saved RFC profile:
 
 ```bash
-python sat_descarga_masiva.py \
+python descarga_masiva.py \
   --rfc XAXX010101000 \
   --inicio 2025-01-01 \
   --fin 2025-06-30
@@ -191,21 +191,21 @@ python sat_descarga_masiva.py \
 
 ```bash
 # View all pending requests across all RFCs
-python sat_descarga_masiva.py --pendientes
+python descarga_masiva.py --pendientes
 
 # Resume a specific pending request by ID
-python sat_descarga_masiva.py --retomar 3a4341a7-81d6-4830-9210-bf02f46085e0
+python descarga_masiva.py --retomar 3a4341a7-81d6-4830-9210-bf02f46085e0
 
 # Resume all pending requests (one RFC at a time, one password per RFC)
-python sat_descarga_masiva.py --retomar-todas all
-python sat_descarga_masiva.py --retomar-todas XAXX010101000
+python descarga_masiva.py --retomar-todas all
+python descarga_masiva.py --retomar-todas XAXX010101000
 
 # Inspect saved RFC profile
-python sat_descarga_masiva.py --perfil XAXX010101000
+python descarga_masiva.py --perfil XAXX010101000
 
 # Inspect encrypted request history
-python sat_descarga_masiva.py --reveal-cache XAXX010101000
-python sat_descarga_masiva.py --reveal-cache all
+python descarga_masiva.py --reveal-cache XAXX010101000
+python descarga_masiva.py --reveal-cache all
 ```
 
 ### All Arguments
@@ -274,7 +274,7 @@ On subsequent runs, `--cer`, `--key`, and `--output` are filled automatically fr
 To inspect a saved profile:
 
 ```bash
-python sat_descarga_masiva.py --perfil XAXX010101000
+python descarga_masiva.py --perfil XAXX010101000
 ```
 
 If the FIEL files are moved or deleted, the script warns and asks for the paths explicitly. The profile is updated automatically on the next successful download.
@@ -338,7 +338,7 @@ To automate resumption without manual intervention, add a cron job:
 
 ```bash
 # Resume all pending requests every hour
-0 * * * * cd /path/to/taxcrawler-dm && python sat_descarga_masiva.py --retomar-todas all
+0 * * * * cd /path/to/taxcrawler-dm && python descarga_masiva.py --retomar-todas all
 ```
 
 ---
@@ -405,6 +405,7 @@ Additional documentation is available in the repository:
 |---|---|
 | [FLOWS.md](FLOWS.md) | Step-by-step breakdown of every execution flow with examples and a decision map |
 | [ROADMAP.md](ROADMAP.md) | Current status, planned features, and future ideas |
+| [LICENSE](LICENSE) | This project license |
 
 ---
 
@@ -416,4 +417,4 @@ This tool consumes the SAT's official Web Service directly. It is your responsib
 
 ## License
 
-[GNU GPL v3](LICENSE)
+GNU GPL v3
