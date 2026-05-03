@@ -342,5 +342,6 @@ libs/
 results_*/
 .env
 .cache/
+certs/*
 
 # End of https://www.toptal.com/developers/gitignore/api/windows,linux,macos,python,pycharm+all
