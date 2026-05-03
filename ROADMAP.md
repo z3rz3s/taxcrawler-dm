@@ -17,6 +17,13 @@ This document tracks the current state of the project and planned improvements.
 
 ### Completed ✅
 
+**Project Structure**
+
+- ✅ Refactored into focused modules: `config.py`, `cache_manager.py`, `sat_client.py`, `file_handler.py`, `metadata_parser.py`, `excel_generator.py`
+- ✅ `descarga_masiva.py` as the single CLI entry point and flow orchestrator
+- ✅ Code in English, comments and docs in Spanish (no special characters)
+- ✅ `tabla_isr_resico.csv` — static ISR tax table extracted from reference workbook
+
 **Download Engine**
 
 - ✅ SAT Web Service v1.5 integration (SOAP)
@@ -41,6 +48,7 @@ This document tracks the current state of the project and planned improvements.
 - ✅ `--retomar-todas RFC|all` — resume all pending requests sequentially
 - ✅ Automatic cleanup: completed / rejected / expired requests removed from pending
 - ✅ Cron-ready `--retomar-todas` for unattended automation
+- ✅ Default 30-minute timeout for `--retomar` and `--retomar-todas`
 
 **RFC Profile System**
 
@@ -64,27 +72,41 @@ This document tracks the current state of the project and planned improvements.
 - ✅ Step-by-step descriptive logs for every operation
 - ✅ Human-readable summary at the end of each run
 - ✅ Metadata summary with totals, monthly breakdown, and top 5 issuers/receivers
+- ✅ Logging designed for future UI integration — same log calls work in CLI and GUI
 
 **Developer Utilities**
 
 - ✅ `--reveal-cache RFC|all` — inspect encrypted request history
 - ✅ `--perfil RFC` — inspect encrypted RFC profile
-- ✅ `.env.example` with documented variables
+- ✅ `.env.example` with all documented variables
 - ✅ Local `libs/` dependency folder (no virtualenv required)
 - ✅ Interactive mode with real-time validation and profile-assisted defaults
+- ✅ `--help` with grouped arguments and usage examples
+
+**Excel and Working Paper**
+
+- ✅ `--flujo-completo` — end-to-end flow: Metadata (income + expenses) + Excel generation
+- ✅ `excel_generator.py` — generates Papel de Trabajo workbook from downloaded TXT files
+- ✅ 6 fixed sheets matching reference format: `ingresos`, `gastos`, `Impuestos`, `Papel de Trabajo`, `INGRESOS YYYY`, `Calculos`
+- ✅ Multi-month ranges stack data blocks per month inside each sheet with visual separators
+- ✅ Payment complements (tipo P) shown as reference section inside `gastos`, never summed
+- ✅ ISR calculation using RESICO table (3 source priority: hardcoded → `.env` → `--tabla-isr`)
+- ✅ Despacho name resolution (3 source priority: hardcoded default → `.env` → `--despacho`)
+- ✅ `--regimen resico` (default) — PFAE left open with TODO marker
+- ✅ `tabla_isr_resico.csv` — static reference table included in repo
 
 ---
 
-## v1.1 — Excel Export
+## v1.1 — Excel Improvements
 
 ### Planned 📋
 
-- 📋 Parse CFDI XML (3.3 and 4.0) into structured data
-- 📋 `--excel resumen` — one sheet with totals by month and issuer
-- 📋 `--excel detalle` — one row per CFDI with all fields
-- 📋 `--excel completo` — summary sheet + detail sheet + one sheet per month
-- 📋 Excel file saved as `RFC_YYYY-MM-DD.xlsx` in `results_RFC/`
-- 📋 Include: UUID, dates, amounts, RFC emisor/receptor, tax breakdown (IVA, ISR, IEPS), concepts
+- 📋 Cross-sheet Excel formulas linking `papel` to `impuestos` and `ingresos` sheets
+- 📋 IVA carry-forward across months (saldo acumulado)
+- 📋 Multi-currency support (currently MXN only)
+- 📋 PFAE tax regime calculation — pending definition from accounting team
+- 📋 Auto-update ISR table from SAT public source when legislation changes
+- 📋 Client authorization signature section in Papel de Trabajo
 
 ---
 
@@ -93,8 +115,18 @@ This document tracks the current state of the project and planned improvements.
 ### Planned 📋
 
 - 📋 `--test` mode — validates FIEL, password, RFC match, and SAT connectivity without submitting any request
-- 📋 Step-by-step output: files exist → FIEL loads → RFC matches certificate → token obtained
+- 📋 Step-by-step output: files exist → FIEL loads → RFC matches certificate → SAT token obtained
 - 📋 No cache writes, no SAT requests, no output folder creation
+
+---
+
+## v1.3 — Batch Mode
+
+### Planned 📋
+
+- 📋 `--batch rfcs.txt` — run Metadata or full flow for a list of RFCs from a file
+- 📋 Each RFC uses its own profile and pending file
+- 📋 Consolidated summary report across all RFCs at the end
 
 ---
 
@@ -105,15 +137,15 @@ This document tracks the current state of the project and planned improvements.
 **4-screen flow**
 
 - 📋 Screen 1 — Configuration: file pickers for `.cer`/`.key`, RFC input, password field, FIEL verify button
-- 📋 Screen 2 — Request: date pickers, type selectors, anti-block semaphore (🟢/🟡/🔴 based on cache)
-- 📋 Screen 3 — Progress: phase progress bar, live log panel, cancel button
-- 📋 Screen 4 — Results: Metadata preview table (UUID, issuer, amount, date, status), download CFDI button
+- 📋 Screen 2 — Request: date pickers, type selectors, anti-block semaphore (green/yellow/red based on cache)
+- 📋 Screen 3 — Progress: phase progress bar, live log panel (reusing existing log calls), cancel button
+- 📋 Screen 4 — Results: Metadata preview table, download CFDI button, open Excel button
 
 **Anti-block semaphore**
 
-- 📋 🟢 No prior attempts for this period
-- 📋 🟡 1 prior attempt (1 remaining before bypass activates)
-- 📋 🔴 2+ attempts — bypass active, offset applied automatically
+- 📋 Green — no prior attempts for this period
+- 📋 Yellow — 1 prior attempt (1 remaining before bypass activates)
+- 📋 Red — 2+ attempts — bypass active, offset applied automatically
 
 **Pending requests panel**
 
@@ -127,23 +159,23 @@ This document tracks the current state of the project and planned improvements.
 
 ---
 
-## v2.1 — Multi-RFC Batch Mode
-
-### Ideas 💡
-
-- 💡 `--batch rfcs.txt` — run Metadata or CFDI for a list of RFCs from a file
-- 💡 Each RFC uses its own profile and pending file
-- 💡 Summary report across all RFCs at the end
-
----
-
-## v2.2 — Scheduler
+## v2.1 — Scheduler
 
 ### Ideas 💡
 
 - 💡 Built-in scheduler — configure recurring downloads without cron
 - 💡 `--schedule daily|weekly` — auto-run `--retomar-todas` at a set interval
 - 💡 Optional desktop notification when downloads complete
+
+---
+
+## v2.2 — Client Authorization Flow
+
+### Ideas 💡
+
+- 💡 Auto-generate email with Excel attached for client review
+- 💡 Client approval token or simple reply-based confirmation
+- 💡 Audit trail of approvals per period per RFC
 
 ---
 
@@ -154,6 +186,8 @@ This document tracks the current state of the project and planned improvements.
 - SAT processing time varies from minutes to 72 hours depending on server load
 - Date range is limited to the last 6 years by SAT policy
 - Metadata mode has no duplicate request restrictions; CFDI mode uses offset bypass
+- ISR calculation currently supports RESICO only — PFAE pending accounting team definition
+- Excel cross-sheet formulas not yet linked (values written directly, not as cell references)
 
 ---
 

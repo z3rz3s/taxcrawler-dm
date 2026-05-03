@@ -46,7 +46,37 @@ python descarga_masiva.py --rfc RFC --cer fiel.cer --key fiel.key \
 
 ---
 
-## Flow 3 — View Pending Requests
+## Flow 3 — Full End-to-End Flow (Metadata + Excel)
+
+```bash
+python descarga_masiva.py --rfc RFC --cer fiel.cer --key fiel.key \
+  --inicio 2025-01-01 --fin 2025-12-31 --flujo-completo
+```
+
+1. Validates `SAT_CACHE_SALT` and parameters
+2. Loads and verifies the FIEL
+3. **Step 1/3** — Downloads Metadata for emitidos (income)
+4. **Step 2/3** — Downloads Metadata for recibidos (expenses)
+5. **Step 3/3** — Generates Excel workbook via `excel_generator.py`:
+   - Reads downloaded TXT files
+   - Filters income / expense / payment records per month
+   - Calculates IVA and ISR using the configured tax table
+   - Writes monthly sheets + Summary + Calculos
+6. Saves RFC profile on completion
+
+**Optional flags:**
+
+- `--excel resumen|detalle|completo` — controls which sheets are included (default: `completo`)
+- `--regimen resico` — tax regime for ISR calculation (default: `resico`)
+- `--acumulado-anual` — updates a running annual Excel instead of regenerating each time
+- `--despacho "Name"` — accounting firm name shown in the workbook header
+- `--tabla-isr path/to/tabla.csv` — custom ISR tax table CSV
+
+**Key behavior:** This flow does not submit CFDI requests. It uses Metadata only. The Excel is regenerated from scratch on every run (unless `--acumulado-anual` is used). A double-check by the accountant is expected before sharing with the client.
+
+---
+
+## Flow 4 — View Pending Requests
 
 ```bash
 python descarga_masiva.py --pendientes
@@ -58,7 +88,7 @@ python descarga_masiva.py --pendientes
 
 ---
 
-## Flow 4 — Resume a Single Request
+## Flow 5 — Resume a Single Request
 
 ```bash
 python descarga_masiva.py --retomar ID
@@ -74,17 +104,17 @@ python descarga_masiva.py --retomar ID
 
 ---
 
-## Flow 5 — Resume All Pending Requests
+## Flow 6 — Resume All Pending Requests
 
 ```bash
 python descarga_masiva.py --retomar-todas all
-python descarga_masiva.py --retomar-todas VAVC930829LJ1
+python descarga_masiva.py --retomar-todas XAXX010101000
 ```
 
 1. Validates `SAT_CACHE_SALT`
 2. Collects all pending requests across all RFCs (or a specific RFC)
 3. For each RFC — requests password once and reuses it for all pending requests of that RFC
-4. For each request — executes Flow 4 sequentially
+4. For each request — executes Flow 5 sequentially
 5. Prints final summary: completed / terminal error / still pending
 
 **Key behavior:** One password per RFC per session. If a password is incorrect for a given RFC, all requests for that RFC are skipped and the process continues with the next RFC. Suitable for cron job automation.
@@ -96,10 +126,10 @@ python descarga_masiva.py --retomar-todas VAVC930829LJ1
 
 ---
 
-## Flow 6 — Reveal Request History (Cache)
+## Flow 7 — Reveal Request History (Cache)
 
 ```bash
-python descarga_masiva.py --reveal-cache VAVC930829LJ1
+python descarga_masiva.py --reveal-cache XAXX010101000
 python descarga_masiva.py --reveal-cache all
 ```
 
@@ -109,10 +139,10 @@ python descarga_masiva.py --reveal-cache all
 
 ---
 
-## Flow 7 — View RFC Profile
+## Flow 8 — View RFC Profile
 
 ```bash
-python descarga_masiva.py --perfil VAVC930829LJ1
+python descarga_masiva.py --perfil XAXX010101000
 ```
 
 1. Validates `SAT_CACHE_SALT`
@@ -122,7 +152,7 @@ python descarga_masiva.py --perfil VAVC930829LJ1
 
 ---
 
-## Flow 8 — Interactive Mode
+## Flow 9 — Interactive Mode
 
 ```bash
 python descarga_masiva.py
@@ -130,7 +160,7 @@ python descarga_masiva.py
 
 1. Prompts for each parameter one by one with real-time validation
 2. If a profile exists for the entered RFC, automatically fills in FIEL paths and output folder
-3. Continues with Flow 1 or Flow 2 depending on the selected download type
+3. Continues with Flow 1, 2, or 3 depending on the selected options
 
 ---
 
@@ -139,18 +169,35 @@ python descarga_masiva.py
 ```
 Run script
 │
-├── No arguments → Flow 8 (Interactive)
+├── No arguments → Flow 9 (Interactive)
 │
-├── --pendientes → Flow 3
-├── --reveal-cache → Flow 6
-├── --perfil → Flow 7
-├── --retomar ID → Flow 4
-├── --retomar-todas → Flow 5
+├── --pendientes      → Flow 4
+├── --reveal-cache    → Flow 7
+├── --perfil          → Flow 8
+├── --retomar ID      → Flow 5
+├── --retomar-todas   → Flow 6
 │
 └── With --rfc, --inicio, --fin
+    ├── --flujo-completo    → Flow 3 (Metadata x2 + Excel)
     ├── --solicitud Metadata → Flow 1
-    └── --solicitud CFDI → Flow 2
+    └── --solicitud CFDI     → Flow 2
 ```
+
+---
+
+## Module Reference
+
+The project is split into focused modules. Each module has a single responsibility.
+
+| Module               | Responsibility                                                     |
+| -------------------- | ------------------------------------------------------------------ |
+| `descarga_masiva.py` | CLI entry point, argument parsing, flow orchestration              |
+| `config.py`          | Constants, logging setup, env validation, ISR table, despacho name |
+| `cache_manager.py`   | Encrypted cache — history, pending requests, RFC profile           |
+| `sat_client.py`      | SAT Web Service — token, request, polling, package download        |
+| `file_handler.py`    | ZIP extraction, output folder resolution                           |
+| `metadata_parser.py` | TXT parsing, CFDI filters, monthly periods, summary generation     |
+| `excel_generator.py` | Excel workbook generation — sheets, formulas, ISR/IVA calculations |
 
 ---
 
@@ -163,3 +210,27 @@ Run script
 | `.cache/RFC.profile.enc` | Encrypted RFC profile (FIEL paths, output folder, interval) |
 
 All cache files use Fernet (AES-128-CBC) encryption with a key derived from `SAT_CACHE_SALT` + RFC via PBKDF2-SHA256.
+
+---
+
+## Excel Output Reference
+
+The workbook always contains exactly 6 sheets in this order, regardless of the date range.
+For a single month the sheets contain data for that month only.
+For a multi-month range each sheet stacks data blocks per month with visual separators.
+
+| Sheet              | Position | Content                                                                               |
+| ------------------ | -------- | ------------------------------------------------------------------------------------- |
+| `ingresos`         | 1        | Income CFDIs (tipo I, emisor = RFC) grouped by month with subtotals                   |
+| `gastos`           | 2        | Expense CFDIs (tipo I, receptor = RFC) grouped by month + payment complements section |
+| `Impuestos`        | 3        | Left: IVA/ISR breakdown per month. Right: cumulative IVA balance                      |
+| `Papel de Trabajo` | 4        | ISR section (left) and IVA section (right) per month — client-ready                   |
+| `INGRESOS YYYY`    | 5        | Full-year income table. Months with data show real amounts, rest blank                |
+| `Calculos`         | 6        | ISR tax table (RESICO regime) with update note                                        |
+
+**Notes:**
+
+- Payment complements (tipo P) appear inside `gastos` as a reference section and are never summed.
+- Cancelled CFDIs (estatus = Cancelado) are excluded from all sheets.
+- IVA is estimated at 16% of monto — exact breakdown requires CFDI XML (planned v1.1).
+- ISR is calculated using the RESICO table. PFAE regime is planned for v1.1.
