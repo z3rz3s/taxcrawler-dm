@@ -87,11 +87,11 @@ This document tracks the current state of the project and planned improvements.
 
 - ✅ `--flujo-completo` — end-to-end flow: Metadata (income + expenses) + Excel generation
 - ✅ `excel_generator.py` — generates Papel de Trabajo workbook from downloaded TXT files
-- ✅ Sheets: `ingresos`, `gastos`, `pagos` (complements), `impuestos`, `papel` per month + `Summary` + `Calculos`
-- ✅ Modes: `--excel resumen | detalle | completo`
+- ✅ 6 fixed sheets matching reference format: `ingresos`, `gastos`, `Impuestos`, `Papel de Trabajo`, `INGRESOS YYYY`, `Calculos`
+- ✅ Multi-month ranges stack data blocks per month inside each sheet with visual separators
+- ✅ Payment complements (tipo P) shown as reference section inside `gastos`, never summed
 - ✅ ISR calculation using RESICO table (3 source priority: hardcoded → `.env` → `--tabla-isr`)
 - ✅ Despacho name resolution (3 source priority: hardcoded default → `.env` → `--despacho`)
-- ✅ `--acumulado-anual` flag for running annual Excel (Option B)
 - ✅ `--regimen resico` (default) — PFAE left open with TODO marker
 - ✅ `tabla_isr_resico.csv` — static reference table included in repo
 

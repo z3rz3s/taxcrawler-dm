@@ -215,12 +215,22 @@ All cache files use Fernet (AES-128-CBC) encryption with a key derived from `SAT
 
 ## Excel Output Reference
 
-| Sheet name          | Present in mode       | Content                                           |
-| ------------------- | --------------------- | ------------------------------------------------- |
-| `ingresos_YYYY-MM`  | `detalle`, `completo` | Income CFDIs for the month                        |
-| `gastos_YYYY-MM`    | `detalle`, `completo` | Expense CFDIs for the month                       |
-| `pagos_YYYY-MM`     | `detalle`, `completo` | Payment complements (reference only)              |
-| `impuestos_YYYY-MM` | `detalle`, `completo` | IVA and ISR breakdown for the month               |
-| `papel_YYYY-MM`     | `resumen`, `completo` | Working paper (Papel de Trabajo) for client       |
-| `Summary`           | always                | All months — totals of income, expenses, IVA, ISR |
-| `Calculos`          | always                | ISR tax table (RESICO)                            |
+The workbook always contains exactly 6 sheets in this order, regardless of the date range.
+For a single month the sheets contain data for that month only.
+For a multi-month range each sheet stacks data blocks per month with visual separators.
+
+| Sheet              | Position | Content                                                                               |
+| ------------------ | -------- | ------------------------------------------------------------------------------------- |
+| `ingresos`         | 1        | Income CFDIs (tipo I, emisor = RFC) grouped by month with subtotals                   |
+| `gastos`           | 2        | Expense CFDIs (tipo I, receptor = RFC) grouped by month + payment complements section |
+| `Impuestos`        | 3        | Left: IVA/ISR breakdown per month. Right: cumulative IVA balance                      |
+| `Papel de Trabajo` | 4        | ISR section (left) and IVA section (right) per month — client-ready                   |
+| `INGRESOS YYYY`    | 5        | Full-year income table. Months with data show real amounts, rest blank                |
+| `Calculos`         | 6        | ISR tax table (RESICO regime) with update note                                        |
+
+**Notes:**
+
+- Payment complements (tipo P) appear inside `gastos` as a reference section and are never summed.
+- Cancelled CFDIs (estatus = Cancelado) are excluded from all sheets.
+- IVA is estimated at 16% of monto — exact breakdown requires CFDI XML (planned v1.1).
+- ISR is calculated using the RESICO table. PFAE regime is planned for v1.1.

@@ -156,6 +156,45 @@ def filter_pagos(records: list[dict], rfc: str) -> list[dict]:
     ]
 
 
+
+
+# ===========================================================================
+# Agrupacion de registros por mes — usado por excel_generator
+# ===========================================================================
+
+def group_records_by_month(files: list[Path], rfc: str,
+                           record_type: str) -> dict[str, list[dict]]:
+    """
+    Lee los TXTs de Metadata, filtra por tipo y agrupa los registros por mes.
+    Retorna un dict con clave YYYY-MM y lista de registros como valor.
+    record_type: 'ingresos' | 'gastos' | 'pagos'
+
+    Usado por excel_generator para apilar bloques por mes en cada hoja.
+    """
+    grouped: dict[str, list[dict]] = {}
+
+    for path in sorted(files):
+        if path.suffix.lower() != ".txt":
+            continue
+
+        parts     = path.stem.split("-")
+        month_key = f"{parts[0]}-{parts[1]}" if len(parts) >= 2 else "0000-00"
+
+        all_records = read_metadata_file(path)
+
+        if record_type == "ingresos":
+            records = filter_ingresos(all_records, rfc)
+        elif record_type == "gastos":
+            records = filter_gastos(all_records, rfc)
+        elif record_type == "pagos":
+            records = filter_pagos(all_records, rfc)
+        else:
+            records = []
+
+        if records:
+            grouped.setdefault(month_key, []).extend(records)
+
+    return grouped
 # ===========================================================================
 # Resumen legible para humanos (logs al final del proceso Metadata)
 # ===========================================================================

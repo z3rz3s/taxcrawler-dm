@@ -318,17 +318,25 @@ sat_descarga.log                 ← full execution log
 
 The `--flujo-completo` command generates an Excel workbook that replicates the Papel de Trabajo format used by Mexican accounting firms. The workbook is intended to be reviewed and authorized by the client before the accountant files the tax declaration.
 
+The workbook always contains exactly **6 sheets in a fixed order**, matching the reference format. For a single month each sheet contains data for that month only. For a multi-month range each sheet stacks data blocks per month with visual separators.
+
 **Workbook structure:**
 
-| Sheet               | Mode                  | Content                                          |
-| ------------------- | --------------------- | ------------------------------------------------ |
-| `ingresos_YYYY-MM`  | `detalle`, `completo` | Income CFDIs for the month                       |
-| `gastos_YYYY-MM`    | `detalle`, `completo` | Expense CFDIs for the month                      |
-| `pagos_YYYY-MM`     | `detalle`, `completo` | Payment complements (reference only, do not sum) |
-| `impuestos_YYYY-MM` | `detalle`, `completo` | IVA and ISR breakdown for the month              |
-| `papel_YYYY-MM`     | `resumen`, `completo` | Working paper — ISR and IVA summary for client   |
-| `Summary`           | always                | All months — income, expenses, IVA, ISR totals   |
-| `Calculos`          | always                | ISR tax table (RESICO)                           |
+| Position | Sheet              | Content                                                                               |
+| -------- | ------------------ | ------------------------------------------------------------------------------------- |
+| 1        | `ingresos`         | Income CFDIs (tipo I, emisor = RFC) grouped by month with subtotals                   |
+| 2        | `gastos`           | Expense CFDIs (tipo I, receptor = RFC) grouped by month + payment complements section |
+| 3        | `Impuestos`        | Left: IVA/ISR breakdown per month. Right: cumulative IVA balance                      |
+| 4        | `Papel de Trabajo` | ISR section (left) and IVA section (right) per month — client-ready                   |
+| 5        | `INGRESOS YYYY`    | Full-year income table. Months with data show real amounts, rest blank                |
+| 6        | `Calculos`         | ISR tax table (RESICO regime) with update note                                        |
+
+**Notes:**
+
+- Payment complements (tipo P) appear inside `gastos` as a reference section and are never summed
+- Cancelled CFDIs are excluded from all sheets
+- IVA is estimated at 16% of monto — exact breakdown requires CFDI XML (planned v1.1)
+- ISR is calculated using the RESICO table — PFAE regime planned for v1.1
 
 **ISR tax table resolution order:**
 
