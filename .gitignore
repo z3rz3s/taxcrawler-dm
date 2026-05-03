@@ -1,5 +1,11 @@
-# Created by https://www.toptal.com/developers/gitignore/api/windows,linux,macos,python,pycharm+all
-# Edit at https://www.toptal.com/developers/gitignore?templates=windows,linux,macos,python,pycharm+all
+### Project Temp files ###
+certs/*
+*.cer
+*.key
+libs/
+results_*/
+.env
+.cache/
 
 ### Linux ###
 *~
@@ -334,13 +340,3 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
-
-
-*.cer
-*.key
-libs/
-results_*/
-.env
-.cache/
-
-# End of https://www.toptal.com/developers/gitignore/api/windows,linux,macos,python,pycharm+all
