@@ -9,10 +9,10 @@ Setup inicial:
   # Editar .env y definir SAT_CACHE_SALT
  
 Modo interactivo (sin argumentos):
-  python sat_descarga_masiva.py
- 
+  python descarga_masiva.py
+
 Modo CLI — descarga:
-  python sat_descarga_masiva.py \
+  python descarga_masiva.py \
     --rfc TURF010101ABC \
     --cer fiel.cer \
     --key fiel.key \
@@ -22,8 +22,8 @@ Modo CLI — descarga:
     --solicitud Metadata
  
 Modo utilidad — revelar caché:
-  python sat_descarga_masiva.py --reveal-cache TURF010101ABC
-  python sat_descarga_masiva.py --reveal-cache all
+  python descarga_masiva.py --reveal-cache TURF010101ABC
+  python descarga_masiva.py --reveal-cache all
  
 Opcionales:
   --solicitud  CFDI|Metadata            (default: CFDI)
@@ -401,8 +401,11 @@ def validar_parametros(p: dict) -> None:
             f"La fecha de inicio ({p['inicio']}) es posterior a la fecha fin ({p['fin']})"
         )
  
-    hoy        = date.today()
-    limite_sat = date(hoy.year - 6, hoy.month, hoy.day)
+    hoy = date.today()
+    try:
+        limite_sat = hoy.replace(year=hoy.year - 6)
+    except ValueError:  # 29 feb en año no bisiesto
+        limite_sat = date(hoy.year - 6, 2, 28)
     if p["inicio"] < limite_sat:
         errores.append(
             f"El SAT solo permite descargar CFDI desde {limite_sat} (6 años atrás). "
@@ -520,8 +523,8 @@ def solicitar_descarga(fiel: Fiel, token: str, p: dict,
         else:
             cliente   = SolicitaDescargaRecibidos(fiel)
             # El SAT no permite solicitar CFDI recibidos con cancelados incluidos.
-            # estado_comprobante="1" filtra solo vigentes. Para cancelados
-            # solo está disponible Metadata, no CFDI completo.
+            # "1" = vigente, "0" = cancelado (valores numéricos del API SOAP del SAT).
+            # Para cancelados solo está disponible Metadata, no CFDI completo.
             resultado = cliente.solicitar_descarga(
                 token, p["rfc"], fecha_inicio, fecha_fin,
                 rfc_receptor=p["rfc"], tipo_solicitud=p["solicitud"],
