@@ -350,4 +350,7 @@ results_*/
 .cache/
 certs/*
 __pycache__/*
-# End of https://www.toptal.com/developers/gitignore/api/windows,linux,macos,python,pycharm+all
+
+### Obsidian ###
+# config dir
+docs/.obsidian/
