@@ -4,201 +4,216 @@
 
 # OBJECTIVE
 
-Define the high-level structure of the system, including modules, responsibilities, and interaction flow.
+Define the high-level structure of the system including segments, modules, responsibilities, and interaction flow.
 
 ---
 
 # PRINCIPLE
 
-The system is a single-process CLI tool organized into focused modules.
-
-- Each module has one responsibility
-- No module duplicates logic from another
-- descarga_masiva.py is the only entry point
-- All SAT communication goes through sat_client.py
-- All cache operations go through cache_manager.py
-
----
-
-# MODULE MAP
+The system is organized into independent segments. Each segment has a single entry point and calls the layer below it. No segment skips a layer to call a lower one directly.
 
 ```
-descarga_masiva.py
-    |
-    |-- config.py              constants, logging, env, ISR table, despacho
-    |-- cache_manager.py       encrypted cache: history, pending, profile
-    |-- sat_client.py          SAT Web Service: token, request, polling, download
-    |-- file_handler.py        ZIP extraction, output folder resolution
-    |-- metadata_parser.py     TXT parsing, CFDI filters, monthly periods, summary
-    |-- excel_generator.py     Excel workbook: 6 fixed sheets, IVA/ISR calculations
+ui/       -> calls services/ only
+api/      -> calls services/ only
+cli/      -> calls services/ only
+services/ -> calls core/ only
+core/     -> no knowledge of ui, api, cli, or services
 ```
 
 ---
 
-# MODULE RESPONSIBILITIES
+# FOLDER STRUCTURE
 
-## descarga_masiva.py
+```
+taxcrawler-dm/
+├── libs/                       <- all dependencies (single install, shared by all segments)
+│
+├── core/                       <- business logic, no interface dependency
+│   ├── config.py
+│   ├── sat_client.py
+│   ├── cache_manager.py
+│   ├── file_handler.py
+│   ├── metadata_parser.py
+│   └── excel_generator.py
+│
+├── services/                   <- flow orchestration, calls core/ functions
+│   ├── download_service.py
+│   ├── excel_service.py
+│   └── cache_service.py
+│
+├── cli/                        <- CLI entry point, calls services/
+│   └── main.py
+│
+├── api/                        <- FastAPI, calls services/
+│   ├── main.py
+│   └── routes/
+│       ├── download.py
+│       ├── excel.py
+│       └── cache.py
+│
+├── ui/                         <- CustomTkinter, calls services/ directly
+│   └── main.py
+│
+├── docs/                       <- spec-driven documentation
+│   ├── readme.md
+│   ├── foundation/
+│   ├── specification/
+│   └── process/
+│
+├── tabla_isr_resico.csv        <- static ISR RESICO table
+├── .env                        <- environment variables (not committed)
+├── .env.example                <- template
+├── README.md                   <- project overview (GitHub-facing)
+├── FLOWS.md                    <- execution flow reference
+└── ROADMAP.md                  <- project status and plans
+```
 
-- CLI entry point
-- Argument parsing
-- Flow orchestration
-- Calls module functions in defined order
-- Never contains business logic
+---
 
-## config.py
+# SEGMENT DEFINITIONS
 
-- Global constants (SAT states, month names, retry limits)
-- Logging setup (stdout + file)
-- SAT_CACHE_SALT validation
-- ISR table resolution (hardcoded -> env -> CLI)
-- Despacho name resolution (hardcoded -> env -> CLI)
-- Password resolution (env -> getpass)
+## core/
 
-## cache_manager.py
+Contains all business logic. Has no knowledge of CLI, API, or UI. All functions receive explicit typed parameters — no dict of CLI args. This is the single source of truth for system behavior.
 
-- Fernet encryption/decryption for all cache files
-- Attempt history per period per RFC (bypass offset)
-- Pending requests lifecycle (add, remove, read)
-- RFC profile (FIEL paths, output, intervalo)
-- Utility display functions (show_pending, show_profile, reveal_history)
+Modules:
 
-## sat_client.py
+- config.py — constants, logging, env validation, ISR table, despacho, password
+- sat_client.py — SAT Web Service: token, request, polling, download
+- cache_manager.py — encrypted cache: history, pending requests, RFC profile
+- file_handler.py — ZIP extraction, output folder resolution
+- metadata_parser.py — TXT parsing, CFDI filters, grouping, summary
+- excel_generator.py — 6-sheet Excel workbook generation
 
-- FIEL loading and validation
-- SAT token acquisition with retry
-- Download request submission
-- Polling with configurable timeout
-- ZIP package download with retry
-- No knowledge of cache or filesystem
+---
 
-## file_handler.py
+## services/
 
-- Output folder creation (results_RFC/metadata|cfdi/YYYY-MM-DD/)
-- Metadata ZIP extraction and rename to YYYY-MM-RFC.txt
-- ZIP deletion after Metadata extraction
-- CFDI ZIP extraction and rename to YYYY-MM-RFC.zip
-- CFDI XML extraction to YYYY-MM-RFC/ subfolder
+Orchestrates flows by calling core/ functions in the correct order. Exposes clean function signatures usable by CLI, API, and UI without modification. No business logic — only sequencing and error handling.
 
-## metadata_parser.py
+Modules:
 
-- TXT file reading and line parsing
-- CFDI filtering by type and RFC role:
-  ingresos: emisor == RFC, tipo I
-  gastos: receptor == RFC, tipo I
-  pagos: receptor == RFC, tipo P
-- Cancelled CFDI exclusion
-- Monthly period generation
-- Record grouping by month for Excel
-- Human-readable summary generation for logs
+- download_service.py — download_metadata(), download_cfdi(), full_flow()
+- excel_service.py — generate_from_metadata(), generate_from_cfdi()
+- cache_service.py — get_profile(), get_pending(), get_history()
 
-## excel_generator.py
+---
 
-- Exactly 6 fixed sheets per workbook
-- Sheet 1: ingresos (income CFDIs grouped by month)
-- Sheet 2: gastos (expense CFDIs + payment complements)
-- Sheet 3: Impuestos (IVA/ISR per month + cumulative IVA balance)
-- Sheet 4: Papel de Trabajo (ISR left, IVA right per month)
-- Sheet 5: INGRESOS YYYY (full year income table)
-- Sheet 6: Calculos (ISR tax table)
-- All styles defined as module-level constants
-- No business logic — only layout and calculation
+## cli/
+
+Single entry point for command-line usage. Parses arguments and calls services/. Contains no business logic. Renamed from descarga_masiva.py to cli/main.py for structural consistency.
+
+---
+
+## api/
+
+FastAPI application that exposes services/ as HTTP endpoints. Runs locally as a lightweight server. Consumed by ui/ or any external client. Dependencies installed in libs/ alongside CLI dependencies.
+
+Routes:
+
+- /download/metadata
+- /download/cfdi
+- /download/full-flow
+- /excel/from-metadata
+- /excel/from-cfdi
+- /cache/pending
+- /cache/profile
+- /cache/history
+
+---
+
+## ui/
+
+CustomTkinter desktop application. Calls services/ directly — does not go through api/. First visual interface — functional over aesthetic. React + Tauri planned as upgrade in a future phase.
+
+Screens:
+
+- Configuration (RFC, FIEL paths, password, date range)
+- Progress (live log panel, phase indicator, cancel button)
+- Results (file list, open Excel button, pending requests panel)
+
+---
+
+# DEPENDENCY RESOLUTION
+
+All segments resolve libs/ from the project root:
+
+```python
+_libs = Path(__file__).resolve().parent.parent / "libs"
+if _libs.exists() and str(_libs) not in sys.path:
+    sys.path.insert(0, str(_libs))
+```
+
+Files in core/ use parent.parent (two levels up to root). Files in services/, cli/, api/, ui/ use the same pattern.
+
+Single install command for all segments:
+
+```bash
+python -m pip install cfdiclient openpyxl python-dotenv cryptography fastapi uvicorn --target ./libs --break-system-packages
+```
 
 ---
 
 # DATA FLOW
 
-## Metadata Flow
+## CLI Flow
 
 ```
-CLI args
-  -> validate_params()
-  -> resolve_output_dir()       [file_handler]
-  -> load_fiel()                [sat_client]
-  -> for each month:
-       get_token()              [sat_client]
-       request_download()       [sat_client]
-       verify_raw()             [sat_client]
-       download_package()       [sat_client]
-       extract_metadata()       [file_handler]
-  -> write_profile()            [cache_manager]
-  -> generate_metadata_summary()[metadata_parser]
+cli/main.py
+  -> parse arguments
+  -> services/download_service.download_metadata()
+       -> core/sat_client.get_token()
+       -> core/sat_client.request_download()
+       -> core/sat_client.verify_raw()
+       -> core/sat_client.download_package()
+       -> core/file_handler.extract_metadata()
+       -> core/cache_manager.write_profile()
+  -> services/excel_service.generate_from_metadata()
+       -> core/metadata_parser.group_records_by_month()
+       -> core/excel_generator.generate_excel()
 ```
 
-## CFDI Flow
+## API Flow
 
 ```
-CLI args
-  -> validate_params()
-  -> resolve_output_dir()       [file_handler]
-  -> load_fiel()                [sat_client]
-  -> get_attempt_history()      [cache_manager]
-  -> register_attempt()         [cache_manager]
-  -> apply_date_offset()        [sat_client]
-  -> get_token()                [sat_client]
-  -> request_download()         [sat_client]
-  -> add_pending()              [cache_manager]
-  -> verify_with_timeout()      [sat_client]
-  -> download_package()         [sat_client]
-  -> extract_cfdi()             [file_handler]
-  -> remove_pending()           [cache_manager]
-  -> write_profile()            [cache_manager]
+api/routes/download.py
+  -> validate request body
+  -> services/download_service.download_metadata()
+       -> (same as CLI flow)
+  -> return result
 ```
 
-## Full Flow (--flujo-completo)
+## UI Flow
 
 ```
-Metadata emitidos  -> run_metadata()
-Metadata recibidos -> run_metadata()
-Excel generation   -> generate_excel()   [excel_generator]
-                      group_records_by_month() [metadata_parser]
-                      _build_month_calcs()
-                      6 sheet writers
-```
-
----
-
-# CACHE FILE STRUCTURE
-
-```
-.cache/
-  RFC.enc          -> attempt history (period | offset | intentos | ultimo)
-  RFC.pending.enc  -> pending requests (id -> rfc, tipo, solicitud, inicio, fin, output)
-  RFC.profile.enc  -> RFC profile (cer, key, output, intervalo, guardado)
-```
-
-All files encrypted with Fernet AES-128-CBC.
-Key derived via PBKDF2-SHA256 from SAT_CACHE_SALT + RFC.
-
----
-
-# OUTPUT STRUCTURE
-
-```
-results_RFC/
-  metadata/
-    YYYY-MM-DD/
-      YYYY-MM-RFC.txt
-  cfdi/
-    YYYY-MM-DD/
-      YYYY-MM-RFC.zip
-      YYYY-MM-RFC/
-        uuid.xml
-  RFC_YYYY-MM.xlsx
-  RFC_YYYY-MM__YYYY-MM.xlsx
+ui/main.py
+  -> user fills form
+  -> services/download_service.download_metadata()
+       -> (same as CLI flow)
+  -> update progress panel from logs
 ```
 
 ---
 
 # DESIGN PRINCIPLES
 
-- Single entry point (descarga_masiva.py)
-- Single responsibility per module
-- No business logic in CLI layer
-- No SAT calls outside sat_client.py
-- No cache operations outside cache_manager.py
-- Fail-fast validation before any SAT call
+- Single entry point per segment (cli/main.py, api/main.py, ui/main.py)
+- No business logic outside core/
+- No interface logic inside core/
+- Services/ is the only caller of core/
+- All segments share the same libs/ folder
+- Passwords never stored — resolved at runtime
+- SAT_CACHE_SALT always from .env
 - Every user-visible action produces a log entry
-- Passwords never stored in any file or cache
+
+---
+
+# PLANNED UPGRADES (future phases)
+
+- POO and design patterns applied to core/ modules
+- React + Tauri replacing CustomTkinter UI
+- Virtual environments replacing shared libs/
+- Multi-user support in api/
 
 ---
 
@@ -206,7 +221,8 @@ results_RFC/
 
 Detailed behavior per module is defined in:
 
-- system-modules.md
-- cli-contract.md
-- user-stories.md
-- FLOWS.md
+- specification/system-modules.md
+- specification/cli-contract.md
+- specification/api-contract.md
+- specification/ui-spec.md
+- specification/user-stories.md

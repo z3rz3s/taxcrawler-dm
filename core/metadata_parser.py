@@ -14,7 +14,7 @@ from calendar import monthrange
 from datetime import date
 from pathlib import Path
 
-from config import MESES_ES, log
+from core.config import MESES_ES, log
 
 
 # ===========================================================================

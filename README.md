@@ -52,20 +52,60 @@ The SAT provides an official SOAP Web Service (v1.5) that allows registered taxp
 
 ## Project Structure
 
+> Phase 3 in progress: codebase is being reorganized into segments.
+> Current files live at root. Target structure shown below.
+
+**Current (flat, working):**
+
 ```
 taxcrawler-dm/
-├── descarga_masiva.py     ← CLI entry point and flow orchestrator
-├── config.py              ← constants, logging, env validation, ISR table, despacho name
-├── cache_manager.py       ← encrypted cache — history, pending requests, RFC profile
-├── sat_client.py          ← SAT Web Service — token, request, polling, download
-├── file_handler.py        ← ZIP extraction, output folder resolution
-├── metadata_parser.py     ← TXT parsing, CFDI filters, monthly periods, summary
-├── excel_generator.py     ← Excel workbook generation — sheets, formulas, IVA/ISR
-├── tabla_isr_resico.csv   ← static ISR tax table (RESICO regime)
+├── descarga_masiva.py     ← CLI entry point (will move to cli/main.py)
+├── config.py              ← constants, logging, env, ISR table (will move to core/)
+├── cache_manager.py       ← encrypted cache (will move to core/)
+├── sat_client.py          ← SAT Web Service (will move to core/)
+├── file_handler.py        ← ZIP extraction (will move to core/)
+├── metadata_parser.py     ← TXT parsing and filters (will move to core/)
+├── excel_generator.py     ← Excel generation (will move to core/)
+├── tabla_isr_resico.csv   ← static ISR tax table (RESICO)
+├── libs/                  ← all dependencies (shared, like node_modules)
 ├── .env.example           ← environment variable template
-├── FLOWS.md               ← detailed flow documentation
+├── FLOWS.md               ← execution flow reference
 ├── ROADMAP.md             ← project status and planned features
-└── libs/                  ← local dependencies (not committed)
+└── docs/                  ← spec-driven documentation
+```
+
+**Target (multi-interface):**
+
+```
+taxcrawler-dm/
+├── libs/                  ← all dependencies (single install, shared by all segments)
+├── core/                  ← business logic — no interface dependency
+│   ├── config.py
+│   ├── sat_client.py
+│   ├── cache_manager.py
+│   ├── file_handler.py
+│   ├── metadata_parser.py
+│   └── excel_generator.py
+├── services/              ← flow orchestration — calls core/ only
+│   ├── download_service.py
+│   ├── excel_service.py
+│   └── cache_service.py
+├── cli/                   ← CLI entry point — calls services/ only
+│   └── main.py
+├── api/                   ← FastAPI — calls services/ only
+│   ├── main.py
+│   └── routes/
+├── ui/                    ← CustomTkinter desktop app — calls services/ only
+│   └── main.py
+├── docs/                  ← spec-driven documentation
+│   ├── readme.md          ← contributor onboarding index
+│   ├── foundation/
+│   ├── specification/
+│   └── process/
+├── tabla_isr_resico.csv
+├── .env.example
+├── FLOWS.md
+└── ROADMAP.md
 ```
 
 ---
@@ -486,6 +526,7 @@ Every step is logged with a timestamp, level, and descriptive message. Logs go s
 | ------------------------ | -------------------------------------------------------------------------------------------- |
 | [FLOWS.md](FLOWS.md)     | Step-by-step breakdown of every execution flow, module reference, and Excel output reference |
 | [ROADMAP.md](ROADMAP.md) | Current status, planned features, and future ideas                                           |
+| [docs/](docs/readme.md)  | Spec-driven documentation index for contributors                                             |
 | [LICENSE](LICENSE)       | Project license                                                                              |
 
 ---

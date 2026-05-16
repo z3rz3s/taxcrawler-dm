@@ -22,6 +22,7 @@ Define a system that enables:
 - Support for multiple taxpayer clients (RFCs) from a single installation
 - Full auditability of all downloaded data
 - Operation without third-party APIs or recurring costs
+- Multiple interfaces: CLI, API, and desktop GUI sharing the same business logic
 
 ---
 
@@ -33,12 +34,13 @@ Define a system that enables:
 - Needs monthly working papers per client
 - Requires evidence (XML files) to support tax declarations
 - Uses Windows or macOS
+- May use CLI, GUI, or both depending on technical comfort
 
 ## Secondary User — Business Owner or Taxpayer
 
 - Wants to download and review their own invoices
 - May not have accounting knowledge
-- Needs simple commands or interactive mode
+- Prefers graphical interface over CLI
 
 ---
 
@@ -48,7 +50,7 @@ This system is not a generic invoice viewer.
 
 It is:
 
-> A CLI tool that connects directly to the SAT Web Service, downloads CFDI metadata and XML files per RFC, and generates accounting working papers in Excel format ready for client review and tax declaration.
+> A multi-interface tool that connects directly to the SAT Web Service, downloads CFDI metadata and XML files per RFC, and generates accounting working papers in Excel format ready for client review and tax declaration.
 
 ---
 
@@ -60,8 +62,7 @@ Registro Federal de Contribuyentes. Unique tax identifier for each taxpayer in M
 
 ## FIEL (e.firma)
 
-Digital certificate issued by SAT. Required to authenticate against the Web Service.
-Composed of: .cer file + .key file + password.
+Digital certificate issued by SAT. Required to authenticate against the Web Service. Composed of: .cer file + .key file + password.
 
 ## CFDI
 
@@ -69,24 +70,19 @@ Comprobante Fiscal Digital por Internet. Official electronic invoice format in M
 
 ## Metadata
 
-Lightweight TXT summary of CFDIs. Contains UUID, RFC, amounts, dates, and status.
-Downloaded without CFDI attempt limit. Used for Excel generation.
+Lightweight TXT summary of CFDIs. Contains UUID, RFC, amounts, dates, and status. Downloaded without CFDI attempt limit. Used for Excel generation.
 
 ## CFDI XML
 
-Full invoice file with complete tax breakdown including SubTotal, IVA, ISR, IEPS.
-Counts against SAT duplicate request limits. Used as audit evidence.
+Full invoice file with complete tax breakdown including SubTotal, IVA, ISR, IEPS. Counts against SAT duplicate request limits. Used as audit evidence.
 
 ## Papel de Trabajo
 
-Accounting working paper. Excel document generated from Metadata showing income,
-expenses, IVA and ISR calculations. Reviewed and authorized by the client before
-the accountant files the tax declaration.
+Accounting working paper. Excel document generated from Metadata showing income, expenses, IVA and ISR calculations. Reviewed and authorized by the client before the accountant files the tax declaration.
 
 ## Solicitud Pendiente
 
-A CFDI download request submitted to the SAT that has not yet been processed.
-The SAT may take minutes to 72 hours to prepare the response.
+A CFDI download request submitted to the SAT that has not yet been processed. The SAT may take minutes to 72 hours to prepare the response.
 
 ## RESICO
 
@@ -94,7 +90,7 @@ Regimen Simplificado de Confianza. Tax regime for small taxpayers with simplifie
 
 ## PFAE
 
-Personas Fisicas con Actividad Empresarial. Tax regime with progressive ISR calculation.
+Personas Fisicas con Actividad Empresarial. Tax regime with progressive ISR calculation. Currently not implemented — pending accounting team definition.
 
 ---
 
@@ -135,15 +131,22 @@ Personas Fisicas con Actividad Empresarial. Tax regime with progressive ISR calc
 - Generate Papel de Trabajo from downloaded Metadata TXT files
 - 6 fixed sheets matching accounting reference format
 - ISR calculation using RESICO table
-- IVA estimation at 16% of monto
+- IVA estimation at 16% of monto (exact values planned via XML parser)
+
+## 7. Multiple Interfaces (planned)
+
+- CLI: command-line for technical users and automation
+- API: FastAPI for UI integration and future integrations
+- GUI: CustomTkinter desktop app for non-technical users
 
 ---
 
 # CONSTRAINTS
 
 - The system must never store FIEL passwords in any file
-- The system must never submit duplicate CFDI requests for the same period without offset
-- The system must not generate Excel files with invalid formulas
+- The system must never submit duplicate CFDI requests without offset
+- No business logic outside core/
+- No interface logic inside core/
 - All SAT calls must be logged with timestamps
 - All cache files must be encrypted
 
@@ -158,6 +161,7 @@ The system is considered successful when:
 - CFDI XML files are preserved as audit evidence
 - Pending requests survive interruptions and can be resumed
 - The system runs on Windows and macOS without additional configuration
+- A non-technical user can complete the full flow using the desktop GUI
 
 ---
 
@@ -167,7 +171,8 @@ This document defines domain concepts, product scope, and system boundaries.
 
 Detailed behavior is defined in:
 
-- system-modules.md
-- user-stories.md
-- cli-contract.md
-- FLOWS.md
+- specification/system-modules.md
+- specification/user-stories.md
+- specification/cli-contract.md
+- specification/api-contract.md
+- specification/ui-spec.md

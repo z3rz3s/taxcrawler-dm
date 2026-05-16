@@ -20,7 +20,7 @@ from cfdiclient import (
     VerificaSolicitudDescarga,
 )
 
-from config import (
+from core.config import (
     MAX_DOWNLOAD_RETRIES,
     MAX_TOKEN_RETRIES,
     RETRY_PAUSE_SEC,

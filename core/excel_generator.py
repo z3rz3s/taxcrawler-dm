@@ -36,8 +36,8 @@ if _libs.exists() and str(_libs) not in sys.path:
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
-from config import MESES_ES, log
-from metadata_parser import (
+from core.config import MESES_ES, log
+from core.metadata_parser import (
     generate_monthly_periods,
     group_records_by_month,
 )

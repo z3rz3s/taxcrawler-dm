@@ -29,7 +29,7 @@ if _libs.exists() and str(_libs) not in sys.path:
 # ---------------------------------------------------------------------------
 # Modulos del proyecto
 # ---------------------------------------------------------------------------
-from config import (
+from core.config import (
     RETOMAR_TIMEOUT_MIN,
     get_despacho_name,
     log,
@@ -37,7 +37,7 @@ from config import (
     resolve_password,
     validate_salt,
 )
-from cache_manager import (
+from core.cache_manager import (
     add_pending,
     get_attempt_history,
     read_pending,
@@ -49,7 +49,7 @@ from cache_manager import (
     show_profile,
     write_profile,
 )
-from sat_client import (
+from core.sat_client import (
     apply_date_offset,
     download_package,
     get_token,
@@ -58,13 +58,13 @@ from sat_client import (
     verify_raw,
     verify_with_timeout,
 )
-from file_handler import (
+from core.file_handler import (
     extract_cfdi,
     extract_metadata,
     resolve_output_dir,
     resolve_retomar_output_dir,
 )
-from metadata_parser import (
+from core.metadata_parser import (
     generate_metadata_summary,
     generate_monthly_periods,
 )
@@ -205,8 +205,8 @@ def run_retomar(request_id: str, fiel, timeout_min: int | None) -> bool:
     Busca el ID en todos los archivos .pending.enc disponibles.
     Retorna True si completo exitosamente, False si sigue pendiente o fallo.
     """
-    from config import CACHE_DIR
-    from cache_manager import elapsed_label
+    from core.config import CACHE_DIR
+    from core.cache_manager import elapsed_label
 
     validate_salt()
 
@@ -284,7 +284,7 @@ def run_retomar_todas(rfc_target: str, timeout_min: int | None) -> None:
     Una contrasena por RFC por sesion — no se repite si hay multiples pendientes.
     Si un RFC falla, continua con el siguiente.
     """
-    from config import CACHE_DIR
+    from core.config import CACHE_DIR
 
     validate_salt()
 
@@ -387,7 +387,7 @@ def run_metadata(fiel, params: dict, output_dir: Path) -> list[Path]:
     Continua automaticamente si un mes no tiene CFDIs (codigo 5004).
     Retorna la lista de archivos TXT descargados.
     """
-    from config import MESES_ES
+    from core.config import MESES_ES
 
     periods = generate_monthly_periods(params["inicio"], params["fin"])
     total   = len(periods)
@@ -581,7 +581,7 @@ def run_full_flow(fiel, params: dict) -> None:
     log.info("PASO 3/3 — Generando Excel con Papel de Trabajo...")
 
     try:
-        from excel_generator import generate_excel
+        from core.excel_generator import generate_excel
         isr_table  = resolve_isr_table(params.get("tabla_isr"))
         despacho   = get_despacho_name(params.get("despacho"))
 
@@ -723,7 +723,7 @@ def parse_args() -> dict | None:
 
     if args.retomar or args.retomar_todas:
         validate_salt()
-        from config import CACHE_DIR
+        from core.config import CACHE_DIR
 
         rfc_retomar = None
         if args.retomar:

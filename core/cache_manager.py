@@ -15,7 +15,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from config import CACHE_DIR, log, validate_salt
+from core.config import CACHE_DIR, log, validate_salt
 
 
 # ===========================================================================

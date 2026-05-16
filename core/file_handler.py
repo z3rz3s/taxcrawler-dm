@@ -12,7 +12,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from config import log
+from core.config import log
 
 
 # ===========================================================================

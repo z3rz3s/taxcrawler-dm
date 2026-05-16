@@ -8,85 +8,68 @@ Define all system modules with explicit responsibilities and boundaries.
 
 ---
 
-# GENERAL RULE
+# GENERAL RULES
 
-Each module:
-
-- Has a single responsibility
-- Does not duplicate logic from another module
-- Does not depend on interface implementation
-- sys.exit() is only called from descarga_masiva.py
-
----
-
-# MODULE DEFINITIONS
-
-## 1. CLI Orchestrator (descarga_masiva.py)
-
-Responsibility:
-
-- Parse CLI arguments
-- Validate parameters before any SAT call
-- Orchestrate flow by calling module functions in order
-- Print final summaries
-
-Must NOT:
-
-- Contain business logic
-- Call SAT directly
-- Read or write cache files directly
-- Parse XML or TXT files
+- Each module has a single responsibility
+- No module duplicates logic from another
+- core/ modules have no knowledge of cli/, api/, or ui/
+- services/ is the only layer that calls core/ directly
+- cli/, api/, and ui/ call services/ only — never core/ directly
+- sys.exit() is only called from cli/main.py
 
 ---
 
-## 2. Config (config.py)
+# SEGMENT: core/
+
+## core/config.py
 
 Responsibility:
 
 - Define global constants
 - Initialize logging (stdout + sat_descarga.log)
 - Validate SAT_CACHE_SALT from environment
-- Resolve ISR table (hardcoded -> TABLA_ISR_PATH env -> --tabla-isr CLI)
-- Resolve despacho name (DEFAULT_DESPACHO -> DESPACHO_NOMBRE env -> --despacho CLI)
+- Resolve ISR table (hardcoded -> TABLA_ISR_PATH env -> explicit path)
+- Resolve despacho name (DEFAULT_DESPACHO -> DESPACHO_NOMBRE env -> explicit value)
 - Resolve password (SAT_PASSWORD_RFC env -> getpass)
 
-Constants defined:
+Constants:
 
 - SAT_ESTADOS: dict mapping state codes to descriptions
 - MESES_ES: dict mapping month numbers to Spanish names
 - MAX_TOKEN_RETRIES: 3
 - MAX_DOWNLOAD_RETRIES: 3
 - RETRY_PAUSE_SEC: 5
-- CACHE_DIR: .cache/ relative to script
+- CACHE_DIR: .cache/ relative to project root
 - RETOMAR_TIMEOUT_MIN: 30
 - DEFAULT_DESPACHO: "TEST_DESPACHO_TEST"
 - TABLA_ISR_RESICO_DEFAULT: list of tuples
 
 ---
 
-## 3. Cache Manager (cache_manager.py)
+## core/cache_manager.py
 
 Responsibility:
 
 - Encrypt and decrypt all .cache/ files using Fernet AES-128-CBC
 - Manage attempt history per period (bypass offset)
-- Manage pending requests lifecycle
-- Manage RFC profile
+- Manage pending requests lifecycle (add, remove, read)
+- Manage RFC profile (FIEL paths, output, intervalo)
+- Display utility functions for inspection
 
 Operations:
 
-- \_read_enc(rfc, path) -> dict
-- \_write_enc(rfc, path, data) -> None
+- _read_enc(rfc, path) -> dict
+- _write_enc(rfc, path, data) -> None
 - get_attempt_history(rfc, start, end, tipo) -> dict
-- register_attempt(rfc, start, end, tipo) -> int (offset seconds)
+- register_attempt(rfc, start, end, tipo) -> int
 - add_pending(rfc, request_id, params, dt_start, dt_end) -> None
 - remove_pending(rfc, request_id, reason) -> None
 - read_pending(rfc) -> dict
 - read_profile(rfc) -> dict
 - write_profile(rfc, cer, key, output, intervalo) -> None
-- show_pending() -> None (display utility)
-- show_profile(rfc) -> None (display utility)
-- reveal_history(rfc_target) -> None (display utility)
+- show_pending() -> None
+- show_profile(rfc) -> None
+- reveal_history(rfc_target) -> None
 
 Constraint:
 
@@ -94,7 +77,7 @@ Constraint:
 
 ---
 
-## 4. SAT Client (sat_client.py)
+## core/sat_client.py
 
 Responsibility:
 
@@ -117,9 +100,9 @@ Operations:
 Return values for verify_with_timeout:
 
 - list[str]: package IDs when SAT completes (estado 3)
-- "rechazada": terminal state, remove from pending
-- "vencida": terminal state, remove from pending
-- None: timeout reached, keep in pending
+- "rechazada": terminal state
+- "vencida": terminal state
+- None: timeout reached
 
 Constraint:
 
@@ -128,7 +111,7 @@ Constraint:
 
 ---
 
-## 5. File Handler (file_handler.py)
+## core/file_handler.py
 
 Responsibility:
 
@@ -151,11 +134,11 @@ Rules:
 
 ---
 
-## 6. Metadata Parser (metadata_parser.py)
+## core/metadata_parser.py
 
 Responsibility:
 
-- Parse TXT files from SAT Metadata format (~ separated)
+- Parse TXT files from SAT Metadata format (tilde separated)
 - Filter records by CFDI type and RFC role
 - Exclude cancelled CFDIs
 - Generate monthly periods for download loop
@@ -177,23 +160,11 @@ Filter rules:
 
 - ingresos: rfc_emisor == RFC, tipo == "I", estatus != "Cancelado"
 - gastos: rfc_receptor == RFC, tipo == "I", estatus != "Cancelado"
-- pagos: rfc_receptor == RFC, tipo == "P" (reference, never summed)
-
-TXT columns (~ separated, 0-indexed):
-
-- 0: UUID
-- 1: RfcEmisor
-- 2: NombreEmisor
-- 3: RfcReceptor
-- 4: NombreReceptor
-- 6: FechaEmision
-- 8: Monto
-- 9: EfectoComprobante (tipo: I, E, P, N)
-- 10: Estatus
+- pagos: rfc_receptor == RFC, tipo == "P"
 
 ---
 
-## 7. Excel Generator (excel_generator.py)
+## core/excel_generator.py
 
 Responsibility:
 
@@ -203,23 +174,7 @@ Responsibility:
 
 Operations:
 
-- generate_excel(rfc, start_date, end_date, income_files, expense_files,
-  output_dir, isr_table, despacho, regimen, acumulado_anual,
-  excel_mode) -> Path
-
-Internal sheet writers (private):
-
-- \_write_ingresos(ws, grouped)
-- \_write_gastos(ws, grouped_gastos, grouped_pagos)
-- \_write_impuestos(ws, month_calcs)
-- \_write_papel(ws, rfc, client_name, despacho, month_calcs)
-- \_write_ingresos_historico(ws, rfc, year, month_calcs)
-- \_write_calculos(ws, isr_table)
-
-Calculation functions:
-
-- \_lookup_isr(income, tabla) -> dict
-- \_build_month_calcs(income_recs, expense_recs, isr_table) -> dict
+- generate_excel(rfc, start_date, end_date, income_files, expense_files, output_dir, isr_table, despacho, regimen, acumulado_anual, excel_mode) -> Path
 
 Sheet order (always fixed):
 
@@ -230,41 +185,174 @@ Sheet order (always fixed):
 5. INGRESOS YYYY
 6. Calculos
 
-File naming:
+Current limitations:
 
-- Single month: RFC_YYYY-MM.xlsx
-- Range: RFC_YYYY-MM\_\_YYYY-MM.xlsx
-
-Current limitations (TODO):
-
-- IVA estimated at 16% of monto — exact values require XML parser
-- ISR retenido fixed at 0.0 — requires XML parser
-- PFAE regime not implemented
+- IVA estimated at 16% of monto
+- ISR retenido fixed at 0.0
+- PFAE regime not implemented (TODO)
 
 ---
 
-## 8. XML Parser (xml_parser.py) — PLANNED v1.1
+## core/xml_parser.py — PLANNED (Phase 7)
 
 Responsibility:
 
 - Read CFDI XML files from disk
 - Extract exact tax breakdown per invoice
+- Support CFDI 3.3 and 4.0
 
 Fields to extract:
 
-- Version (3.3 or 4.0)
-- UUID, Fecha, Serie, Folio
+- Version, UUID, Fecha, Serie, Folio
 - RFC and name of emisor and receptor
 - SubTotal, Descuento, Total
 - IVA trasladado 16%, IVA trasladado 0%, IVA retenido
-- ISR retenido
-- IEPS trasladado
+- ISR retenido, IEPS trasladado
 - MetodoPago, FormaPago, Moneda, TipoCambio
 - Conceptos (descripcion + importe)
 
+Status: NOT IMPLEMENTED
+
+---
+
+# SEGMENT: services/
+
+## services/download_service.py
+
+Responsibility:
+
+- Orchestrate Metadata and CFDI download flows
+- Provide clean function signatures for cli/, api/, and ui/
+- Handle pending request registration and profile saving
+
+Operations:
+
+- download_metadata(rfc, cer_path, key_path, password, start_date, end_date, tipo, output_dir, intervalo) -> list[Path]
+- download_cfdi(rfc, cer_path, key_path, password, start_date, end_date, tipo, output_dir, intervalo, timeout_min) -> list[Path]
+- full_flow(rfc, cer_path, key_path, password, start_date, end_date, output_dir, intervalo, timeout_min, despacho, tabla_isr, regimen) -> Path
+
 Constraint:
 
-- Must support both CFDI 3.3 and 4.0
-- Must not modify XML files on disk
+- Must not contain business logic
+- Must not call sys.exit()
+- Must call core/ functions only
 
-Status: NOT IMPLEMENTED — pending Phase 3
+---
+
+## services/excel_service.py
+
+Responsibility:
+
+- Orchestrate Excel generation from Metadata or CFDI XML files
+- Provide clean function signatures for cli/, api/, and ui/
+
+Operations:
+
+- generate_from_metadata(rfc, start_date, end_date, income_files, expense_files, output_dir, isr_table, despacho, regimen) -> Path
+- generate_from_cfdi(rfc, start_date, end_date, xml_dir, output_dir, isr_table, despacho, regimen) -> Path <- PLANNED (Phase 7)
+
+---
+
+## services/cache_service.py
+
+Responsibility:
+
+- Expose cache inspection operations for cli/, api/, and ui/
+- Provide clean typed returns instead of raw dicts
+
+Operations:
+
+- get_profile(rfc) -> dict
+- get_pending(rfc) -> dict
+- get_history(rfc) -> dict
+- get_all_pending() -> dict
+
+---
+
+# SEGMENT: cli/
+
+## cli/main.py
+
+Responsibility:
+
+- Parse CLI arguments
+- Validate parameters before any service call
+- Call services/ functions with resolved parameters
+- Print final summaries and exit codes
+
+Constraint:
+
+- Must not call core/ directly
+- Must not contain business logic
+- sys.exit() is only called here
+
+---
+
+# SEGMENT: api/
+
+## api/main.py
+
+Responsibility:
+
+- Initialize FastAPI application
+- Register all routes
+- Configure CORS and middleware
+
+## api/routes/download.py
+
+Responsibility:
+
+- Expose download_service operations as HTTP endpoints
+- Validate request bodies
+- Return structured JSON responses
+
+Endpoints:
+
+- POST /download/metadata
+- POST /download/cfdi
+- POST /download/full-flow
+
+## api/routes/excel.py
+
+Endpoints:
+
+- POST /excel/from-metadata
+- POST /excel/from-cfdi <- PLANNED
+
+## api/routes/cache.py
+
+Endpoints:
+
+- GET /cache/pending
+- GET /cache/pending/{rfc}
+- GET /cache/profile/{rfc}
+- GET /cache/history/{rfc}
+
+Constraint:
+
+- Routes must only call services/ — never core/ directly
+
+---
+
+# SEGMENT: ui/
+
+## ui/main.py
+
+Responsibility:
+
+- Initialize CustomTkinter application
+- Render 3 screens
+- Call services/ functions on user interaction
+- Display logs in real time
+
+Screens:
+
+- Configuration: RFC, FIEL paths, password, date range, despacho
+- Progress: live log panel, phase indicator, cancel button
+- Results: file list, open Excel button, pending requests panel
+
+Constraint:
+
+- Must not call core/ directly
+- Must not contain business logic
+- Calls services/ directly (not through api/)

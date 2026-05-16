@@ -17,13 +17,6 @@ This document tracks the current state of the project and planned improvements.
 
 ### Completed ✅
 
-**Project Structure**
-
-- ✅ Refactored into focused modules: `config.py`, `cache_manager.py`, `sat_client.py`, `file_handler.py`, `metadata_parser.py`, `excel_generator.py`
-- ✅ `descarga_masiva.py` as the single CLI entry point and flow orchestrator
-- ✅ Code in English, comments and docs in Spanish (no special characters)
-- ✅ `tabla_isr_resico.csv` — static ISR tax table extracted from reference workbook
-
 **Download Engine**
 
 - ✅ SAT Web Service v1.5 integration (SOAP)
@@ -72,7 +65,6 @@ This document tracks the current state of the project and planned improvements.
 - ✅ Step-by-step descriptive logs for every operation
 - ✅ Human-readable summary at the end of each run
 - ✅ Metadata summary with totals, monthly breakdown, and top 5 issuers/receivers
-- ✅ Logging designed for future UI integration — same log calls work in CLI and GUI
 
 **Developer Utilities**
 
@@ -95,102 +87,123 @@ This document tracks the current state of the project and planned improvements.
 - ✅ `--regimen resico` (default) — PFAE left open with TODO marker
 - ✅ `tabla_isr_resico.csv` — static reference table included in repo
 
+**Spec-Driven Documentation**
+
+- ✅ `docs/` folder with contributor onboarding index
+- ✅ `docs/foundation/` — product definition, architecture, action plan
+- ✅ `docs/specification/` — system modules, user stories, cli-contract, api-contract, ui-spec
+- ✅ `docs/process/` — spec rules, llm-workflow, llm-continuity
+
 ---
 
-## v1.1 — Excel Improvements
+## v1.1 — Project Restructure 🔄
 
-### Planned 📋
+Objective:
+Reorganize codebase into segments to support multiple interfaces
+without rewriting business logic.
 
-- 📋 Cross-sheet Excel formulas linking `papel` to `impuestos` and `ingresos` sheets
+- 🔄 Move existing modules to `core/`
+- 🔄 Rename `descarga_masiva.py` to `cli/main.py`
+- 🔄 Create `services/` with `download_service.py`, `excel_service.py`, `cache_service.py`
+- 🔄 Refactor `cli/main.py` to call `services/` instead of `core/` directly
+- 🔄 Update `libs/` path resolution to `parent.parent` pattern in all modules
+- 🔄 Verify CLI behavior is identical after restructure
+
+Constraint: No new features during restructure. CLI behavior must remain identical.
+
+---
+
+## v1.2 — Excel Improvements 📋
+
+- 📋 Excel from CFDI XML files (`--excel-desde-cfdi`) using `core/xml_parser.py`
+- 📋 Exact IVA, ISR, and IEPS values from XML instead of Metadata estimates
 - 📋 IVA carry-forward across months (saldo acumulado)
 - 📋 Multi-currency support (currently MXN only)
-- 📋 PFAE tax regime calculation — pending definition from accounting team
+- 📋 PFAE tax regime — pending accounting team definition
 - 📋 Auto-update ISR table from SAT public source when legislation changes
-- 📋 Client authorization signature section in Papel de Trabajo
 
 ---
 
-## v1.2 — Test Mode
+## v1.3 — Test Mode and Batch 📋
 
-### Planned 📋
-
-- 📋 `--test` mode — validates FIEL, password, RFC match, and SAT connectivity without submitting any request
-- 📋 Step-by-step output: files exist → FIEL loads → RFC matches certificate → SAT token obtained
-- 📋 No cache writes, no SAT requests, no output folder creation
-
----
-
-## v1.3 — Batch Mode
-
-### Planned 📋
-
-- 📋 `--batch rfcs.txt` — run Metadata or full flow for a list of RFCs from a file
-- 📋 Each RFC uses its own profile and pending file
+- 📋 `--test` mode — validates FIEL, password, RFC match, and SAT token without submitting requests
+- 📋 `--batch rfcs.txt` — run full flow for a list of RFCs from a file
 - 📋 Consolidated summary report across all RFCs at the end
 
 ---
 
-## v2.0 — Desktop GUI (CustomTkinter)
+## v2.0 — FastAPI 📋
 
-### Planned 📋
+Objective:
+Expose `services/` as HTTP endpoints for UI integration and future use.
 
-**4-screen flow**
-
-- 📋 Screen 1 — Configuration: file pickers for `.cer`/`.key`, RFC input, password field, FIEL verify button
-- 📋 Screen 2 — Request: date pickers, type selectors, anti-block semaphore (green/yellow/red based on cache)
-- 📋 Screen 3 — Progress: phase progress bar, live log panel (reusing existing log calls), cancel button
-- 📋 Screen 4 — Results: Metadata preview table, download CFDI button, open Excel button
-
-**Anti-block semaphore**
-
-- 📋 Green — no prior attempts for this period
-- 📋 Yellow — 1 prior attempt (1 remaining before bypass activates)
-- 📋 Red — 2+ attempts — bypass active, offset applied automatically
-
-**Pending requests panel**
-
-- 📋 List of pending requests with status and resume button per row
-- 📋 Auto-refresh on open
-
-**Packaging**
-
-- 📋 Single executable via PyInstaller (macOS `.app`, Windows `.exe`)
-- 📋 No Python installation required for end users
+- 📋 `api/main.py` — FastAPI application
+- 📋 `POST /download/metadata` — Metadata download
+- 📋 `POST /download/cfdi` — CFDI download with pending management
+- 📋 `POST /download/resume/{id}` — resume pending request
+- 📋 `POST /download/full-flow` — end-to-end flow
+- 📋 `POST /excel/from-metadata` — Excel from TXT files
+- 📋 `POST /excel/from-cfdi` — Excel from XML files (requires v1.2)
+- 📋 `GET /cache/pending`, `/cache/profile/{rfc}`, `/cache/history/{rfc}`
+- 📋 Dependencies installed in shared `libs/` folder
 
 ---
 
-## v2.1 — Scheduler
+## v2.1 — Desktop GUI (CustomTkinter) 📋
 
-### Ideas 💡
+Objective:
+Provide a graphical interface for non-technical users (accountants).
+Calls `services/` directly — does not go through `api/`.
 
-- 💡 Built-in scheduler — configure recurring downloads without cron
-- 💡 `--schedule daily|weekly` — auto-run `--retomar-todas` at a set interval
-- 💡 Optional desktop notification when downloads complete
+- 📋 Screen 1 — Configuration: RFC, FIEL file pickers, password, date range, despacho
+- 📋 Screen 2 — Progress: live log panel, phase indicator, cancel button
+- 📋 Screen 3 — Results: file list, open Excel button, pending requests panel
+- 📋 Anti-block semaphore (green/yellow/red based on cache history)
+- 📋 RFC profile auto-fill when RFC is entered
 
 ---
 
-## v2.2 — Client Authorization Flow
+## v2.2 — React + Tauri UI 💡
 
-### Ideas 💡
+Objective:
+Replace CustomTkinter with a modern React UI packaged as a native executable.
+Consumes `api/` endpoints instead of calling `services/` directly.
 
-- 💡 Auto-generate email with Excel attached for client review
-- 💡 Client approval token or simple reply-based confirmation
-- 💡 Audit trail of approvals per period per RFC
+- 💡 React frontend with Chakra UI component library
+- 💡 Tauri shell for native macOS `.app` and Windows `.exe`
+- 💡 Same 3-screen flow as CustomTkinter — same behavior, modern look
+- 💡 No Python installation required for end users
+
+Constraint: Requires stable `api/` before starting.
+
+---
+
+## v3.0 — Advanced Features 💡
+
+- 💡 POO and design patterns applied to `core/` modules
+- 💡 Virtual environments replacing shared `libs/`
+- 💡 Multi-user support in `api/`
+- 💡 Built-in scheduler (`--schedule daily|weekly`)
+- 💡 Client authorization flow (email + approval before tax filing)
+- 💡 Desktop notification when pending downloads complete
 
 ---
 
 ## Known Limitations
 
-- The SAT has no sandbox environment — all requests use real credentials
-- CFDI mode only downloads active received CFDIs — cancelled ones are only available via Metadata
-- SAT processing time varies from minutes to 72 hours depending on server load
-- Date range is limited to the last 6 years by SAT policy
-- Metadata mode has no duplicate request restrictions; CFDI mode uses offset bypass
-- ISR calculation currently supports RESICO only — PFAE pending accounting team definition
-- Excel cross-sheet formulas not yet linked (values written directly, not as cell references)
+- The SAT has no sandbox — all requests use real FIEL credentials
+- CFDI mode only downloads active received CFDIs — cancelled ones only via Metadata
+- SAT processing time: minutes to 72 hours depending on server load
+- Date range limited to last 6 years by SAT policy
+- Metadata mode has no duplicate restrictions — CFDI uses offset bypass
+- IVA and ISR in Excel are estimates from Metadata — exact values require CFDI XML (v1.2)
+- PFAE tax regime not implemented — pending accounting team definition
+- `services/`, `api/`, and `ui/` segments not yet created (Phase 3 in progress)
 
 ---
 
 ## Contributing
 
-Pull requests and issues are welcome. Please open an issue before submitting a large change so we can discuss the approach first.
+Pull requests and issues are welcome.
+Please open an issue before submitting a large change so we can discuss the approach first.
+Read [docs/readme.md](docs/readme.md) for contributor onboarding.
