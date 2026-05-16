@@ -1,0 +1,107 @@
+.
+├── AGENTS.md
+├── CLAUDE.md
+├── FLOWS.md
+├── LICENSE
+├── README.md
+├── ROADMAP.md
+├── api
+│   ├── main.py
+│   └── routes
+├── cli
+│   └── main.py
+├── core
+│   ├── cache_manager.py
+│   ├── config.py
+│   ├── excel_generator.py
+│   ├── file_handler.py
+│   ├── metadata_parser.py
+│   └── sat_client.py
+├── docs
+│   ├── chat-bootstrap.md
+│   ├── foundation
+│   │   ├── action-plan.md
+│   │   ├── architecture.md
+│   │   └── product-definition.md
+│   ├── process
+│   │   ├── llm-continuity.md
+│   │   ├── llm-workflow.md
+│   │   └── spec-rules.md
+│   ├── readme.md
+│   └── specification
+│       ├── api-contract.md
+│       ├── cli-contract.md
+│       ├── system-modules.md
+│       ├── test-cases.md
+│       ├── ui-spec.md
+│       └── user-stories.md
+├── excel_generator.py.bak
+├── pyrightconfig.json
+├── sat_descarga.log
+├── services
+│   ├── cache_service.py
+│   ├── download_service.py
+│   └── excel_service.py
+├── tabla_isr.csv
+├── ts_current_structure.txt
+└── ui
+    └── main.py
+.
+├── AGENTS.md
+├── CLAUDE.md
+├── FLOWS.md
+├── LICENSE
+├── README.md
+├── ROADMAP.md
+├── api
+│   ├── __init__.py
+│   ├── main.py
+│   └── routes
+│       ├── __init__.py
+│       ├── cache.py
+│       ├── download.py
+│       └── excel.py
+├── cli
+│   ├── __init__.py
+│   └── main.py
+├── core
+│   ├── __init__.py
+│   ├── cache_manager.py
+│   ├── config.py
+│   ├── excel_generator.py
+│   ├── file_handler.py
+│   ├── metadata_parser.py
+│   └── sat_client.py
+├── docs
+│   ├── chat-bootstrap.md
+│   ├── foundation
+│   │   ├── action-plan.md
+│   │   ├── architecture.md
+│   │   └── product-definition.md
+│   ├── process
+│   │   ├── llm-continuity.md
+│   │   ├── llm-workflow.md
+│   │   └── spec-rules.md
+│   ├── readme.md
+│   └── specification
+│       ├── api-contract.md
+│       ├── cli-contract.md
+│       ├── system-modules.md
+│       ├── test-cases.md
+│       ├── ui-spec.md
+│       └── user-stories.md
+├── excel_generator.py.bak
+├── project_structure.txt
+├── pyrightconfig.json
+├── sat_descarga.log
+├── services
+│   ├── __init__.py
+│   ├── cache_service.py
+│   ├── download_service.py
+│   └── excel_service.py
+├── tabla_isr.csv
+└── ui
+    ├── __init__.py
+    └── main.py
+
+11 directories, 46 files

@@ -149,21 +149,39 @@ Expose `services/` as HTTP endpoints for UI integration and future use.
 
 ---
 
-## v2.1 — Desktop GUI (CustomTkinter) 📋
+## v2.1 — Desktop GUI (CustomTkinter) ✅
 
 Objective:
 Provide a graphical interface for non-technical users (accountants).
-Calls `services/` directly — does not go through `api/`.
+Calls `api/` via HTTP — same auth layer as any future client.
 
-- 📋 Screen 1 — Configuration: RFC, FIEL file pickers, password, date range, despacho
-- 📋 Screen 2 — Progress: live log panel, phase indicator, cancel button
-- 📋 Screen 3 — Results: file list, open Excel button, pending requests panel
-- 📋 Anti-block semaphore (green/yellow/red based on cache history)
-- 📋 RFC profile auto-fill when RFC is entered
+- ✅ Screen 1 — Configuration: RFC, FIEL file pickers, password, date range, despacho
+- ✅ Screen 2 — Progress: live log panel, phase indicator, cancel button
+- ✅ Screen 3 — Results: Excel path with open button, pending requests panel
+- ✅ RFC profile auto-fill when RFC is entered (via GET /cache/profile/{rfc})
+- ✅ Server availability check on startup and before each operation
+- ✅ Long-running SAT operations run in background thread
+- ✅ TODO markers for auth header (Basic or JWT) when auth is implemented
+- ✅ install.sh / install.bat — one-command installation
+- ✅ start.sh / start.bat — one-command startup (server + UI)
+- 📋 Anti-block semaphore (green/yellow/red) — planned improvement
 
 ---
 
-## v2.2 — React + Tauri UI 💡
+## v2.2 — API Authentication 📋
+
+Objective:
+Secure the API with Basic Auth or JWT before exposing it beyond localhost.
+
+- 📋 Decide on auth method: Basic Auth (simpler) or JWT (more secure)
+- 📋 Add auth middleware to `api/main.py`
+- 📋 Update `ui/main.py` to send auth header (TODO markers already in place)
+- 📋 Update `.env.example` with `API_USERNAME`, `API_PASSWORD` or `SECRET_KEY`
+- 📋 Update `api-contract.md` with auth requirements
+
+---
+
+## v2.3 — React + Tauri UI 💡
 
 Objective:
 Replace CustomTkinter with a modern React UI packaged as a native executable.

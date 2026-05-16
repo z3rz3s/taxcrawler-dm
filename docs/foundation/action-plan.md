@@ -10,13 +10,15 @@ Define the execution plan based on specification-driven development.
 
 # PRINCIPLE
 
-Implementation must follow specification. No development should occur without defined behavior.
+Implementation must follow specification.
+No development should occur without defined behavior.
 
 ---
 
 # PHASE 1 — CORE CLI (COMPLETED)
 
-Objective: Build the download engine and cache system as a single-file CLI.
+Objective:
+Build the download engine and cache system as a single-file CLI.
 
 Completed:
 
@@ -34,7 +36,8 @@ Completed:
 
 # PHASE 2 — EXCEL WORKING PAPER (COMPLETED)
 
-Objective: Generate accounting working papers from downloaded Metadata TXT files.
+Objective:
+Generate accounting working papers from downloaded Metadata TXT files.
 
 Completed:
 
@@ -50,7 +53,9 @@ Completed:
 
 # PHASE 3 — PROJECT RESTRUCTURE (NEXT)
 
-Objective: Reorganize the codebase into segments (core, services, cli, api, ui) to support multiple interfaces without rewriting business logic.
+Objective:
+Reorganize the codebase into segments (core, services, cli, api, ui)
+to support multiple interfaces without rewriting business logic.
 
 Activities:
 
@@ -61,13 +66,17 @@ Activities:
 - Update all libs/ path resolution to use parent.parent pattern
 - Verify CLI behavior is identical after restructure
 
-Constraint: No new features during restructure. CLI behavior must be identical before and after. All existing tests must pass.
+Constraint:
+No new features during restructure.
+CLI behavior must be identical before and after.
+All existing tests must pass.
 
 ---
 
 # PHASE 4 — SERVICE LAYER (PLANNED)
 
-Objective: Define clean function signatures in services/ usable by CLI, API, and UI.
+Objective:
+Define clean function signatures in services/ usable by CLI, API, and UI.
 
 Activities:
 
@@ -80,13 +89,17 @@ Activities:
 - Implement cache_service.get_pending()
 - Implement cache_service.get_history()
 
-Constraint: Services must not contain business logic. Services must not call sys.exit(). All service functions must have explicit typed parameters.
+Constraint:
+Services must not contain business logic.
+Services must not call sys.exit().
+All service functions must have explicit typed parameters.
 
 ---
 
 # PHASE 5 — FASTAPI (PLANNED)
 
-Objective: Expose services/ as HTTP endpoints for UI and future integrations.
+Objective:
+Expose services/ as HTTP endpoints for UI and future integrations.
 
 Activities:
 
@@ -97,30 +110,59 @@ Activities:
 - Add fastapi and uvicorn to libs/ install command
 - Define api-contract.md before any implementation
 
-Constraint: No API implementation before api-contract.md is complete. API routes must only call services/ — never core/ directly.
+Constraint:
+No API implementation before api-contract.md is complete.
+API routes must only call services/ — never core/ directly.
 
 ---
 
-# PHASE 6 — CUSTOMTKINTER UI (PLANNED)
+# PHASE 5 — CUSTOMTKINTER UI (COMPLETED)
 
-Objective: Provide a graphical interface for non-technical users (accountants).
+Objective:
+Provide a graphical interface for non-technical users (accountants).
+
+Completed:
+
+- ui/main.py with 3-screen flow
+- Screen 1: Configuration with file pickers for .cer and .key
+- Screen 2: Progress with live log panel and cancel button
+- Screen 3: Results with Excel open button and pending requests panel
+- RFC profile auto-fill via GET /cache/profile/{rfc}
+- Server availability check on startup
+- Long-running operations in background thread
+- TODO markers for auth header (Phase 6)
+- install.sh / install.bat — one-command installation
+- start.sh / start.bat — one-command startup
+
+Note: ui/ calls api/ via HTTP — not services/ directly.
+This allows auth to be added in one place (api/ layer) in Phase 6.
+
+---
+
+# PHASE 6 — API AUTHENTICATION (NEXT)
+
+Objective:
+Secure the API with Basic Auth or JWT.
 
 Activities:
 
-- Implement ui/main.py with 3-screen flow
-- Screen 1: Configuration (RFC, FIEL, dates, despacho)
-- Screen 2: Progress (live log panel, phase indicator, cancel)
-- Screen 3: Results (file list, open Excel, pending requests)
-- Anti-block semaphore (green/yellow/red based on cache)
-- ui/ calls services/ directly without going through api/
+- Decide on auth method with team
+- Add auth middleware to api/main.py
+- Update ui/main.py api_post() and api_get() with auth header
+- Add API_USERNAME, API_PASSWORD or SECRET_KEY to .env.example
+- Update api-contract.md with auth requirements
+- Test all endpoints with credentials
 
-Constraint: No UI implementation before ui-spec.md is complete. UI must not contain business logic.
+Constraint:
+core/ and services/ must have no knowledge of auth.
+Auth is handled exclusively in api/ layer.
 
 ---
 
 # PHASE 7 — EXCEL FROM CFDI XML (PLANNED)
 
-Objective: Generate Excel with exact tax breakdown from downloaded CFDI XML files.
+Objective:
+Generate Excel with exact tax breakdown from downloaded CFDI XML files.
 
 Activities:
 
@@ -129,13 +171,16 @@ Activities:
 - Add --excel-desde-cfdi to cli/main.py
 - Add /excel/from-cfdi route to api/
 
-Constraint: No implementation before accounting team defines exact field mapping. xml_parser.py must support both CFDI 3.3 and 4.0.
+Constraint:
+No implementation before accounting team defines exact field mapping.
+xml_parser.py must support both CFDI 3.3 and 4.0.
 
 ---
 
 # PHASE 8 — TEST MODE AND BATCH (PLANNED)
 
-Objective: Validate FIEL without SAT requests and support multi-RFC batch processing.
+Objective:
+Validate FIEL without SAT requests and support multi-RFC batch processing.
 
 Activities:
 
@@ -147,7 +192,8 @@ Activities:
 
 # PHASE 9 — REACT + TAURI UI (FUTURE)
 
-Objective: Replace CustomTkinter with a modern React UI packaged with Tauri.
+Objective:
+Replace CustomTkinter with a modern React UI packaged with Tauri.
 
 Activities:
 
@@ -155,13 +201,17 @@ Activities:
 - Package with Tauri as native executable
 - Distribute as macOS .app and Windows .exe
 
-Constraint: Requires stable api/ before starting. CustomTkinter UI remains available during transition.
+Constraint:
+Requires stable api/ before starting.
+CustomTkinter UI remains available during transition.
 
 ---
 
 # PHASE 10 — POO AND DESIGN PATTERNS (FUTURE)
 
-Objective: Apply object-oriented design and patterns to core/ modules without breaking existing service contracts.
+Objective:
+Apply object-oriented design and patterns to core/ modules
+without breaking existing service contracts.
 
 Activities:
 
@@ -169,7 +219,9 @@ Activities:
 - Apply patterns where complexity justifies it
 - Introduce virtual environments
 
-Constraint: Service function signatures must remain identical. CLI, API, and UI behavior must be unchanged.
+Constraint:
+Service function signatures must remain identical.
+CLI, API, and UI behavior must be unchanged.
 
 ---
 

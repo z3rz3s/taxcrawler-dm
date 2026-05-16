@@ -7,9 +7,14 @@ No tiene conocimiento del cache ni del sistema de archivos — solo habla con el
 """
 
 import base64
+import sys
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
+
+_libs = Path(__file__).resolve().parent.parent / "libs"
+if _libs.exists() and str(_libs) not in sys.path:
+    sys.path.insert(0, str(_libs))
 
 from cfdiclient import (
     Autenticacion,

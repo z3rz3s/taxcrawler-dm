@@ -1,17 +1,17 @@
 """
-descarga_masiva.py
-------------------
+cli/main.py
+-----------
 Entry point del CLI de taxcrawler-dm.
-Orquesta los flujos de descarga usando los modulos especializados.
+Parsea argumentos y delega a services/ — no contiene logica de negocio.
 
 Uso rapido:
-  python descarga_masiva.py --help
+  python cli/main.py --help
 
 Flujos disponibles:
-  Metadata       : --solicitud Metadata
-  CFDI           : --solicitud CFDI
-  Completo E2E   : --flujo-completo
-  Utilitarios    : --pendientes | --retomar | --retomar-todas | --perfil | --reveal-cache
+  Metadata     : --solicitud Metadata
+  CFDI         : --solicitud CFDI
+  Completo E2E : --flujo-completo
+  Utilitarios  : --pendientes | --retomar | --retomar-todas | --perfil | --reveal-cache
 """
 
 import argparse
@@ -20,9 +20,16 @@ from datetime import date, datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Raiz del proyecto — necesaria para resolver imports de core/ y services/
+# ---------------------------------------------------------------------------
+_root = Path(__file__).resolve().parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
+# ---------------------------------------------------------------------------
 # Dependencias locales — libs/ tiene prioridad sobre el sistema
 # ---------------------------------------------------------------------------
-_libs = Path(__file__).resolve().parent / "libs"
+_libs = _root / "libs"
 if _libs.exists() and str(_libs) not in sys.path:
     sys.path.insert(0, str(_libs))
 
@@ -38,11 +45,9 @@ from core.config import (
     validate_salt,
 )
 from core.cache_manager import (
-    add_pending,
-    get_attempt_history,
+    elapsed_label,
     read_pending,
     read_profile,
-    register_attempt,
     remove_pending,
     reveal_history,
     show_pending,
@@ -50,24 +55,18 @@ from core.cache_manager import (
     write_profile,
 )
 from core.sat_client import (
-    apply_date_offset,
     download_package,
     get_token,
     load_fiel,
-    request_download,
-    verify_raw,
     verify_with_timeout,
 )
 from core.file_handler import (
     extract_cfdi,
-    extract_metadata,
     resolve_output_dir,
     resolve_retomar_output_dir,
 )
-from core.metadata_parser import (
-    generate_metadata_summary,
-    generate_monthly_periods,
-)
+from core.metadata_parser import generate_metadata_summary
+from services.download_service import download_metadata, download_cfdi, full_flow
 
 
 # ===========================================================================
@@ -106,9 +105,6 @@ def validate_params(p: dict) -> None:
 
     if p.get("timeout") is not None and p["timeout"] < 5:
         errors.append("El timeout debe ser al menos 5 minutos.")
-
-    if p.get("excel") and p.get("solicitud") != "CFDI":
-        errors.append("--excel solo esta disponible en modo --solicitud CFDI.")
 
     if errors:
         log.error(f"Se encontraron {len(errors)} error(es) de validacion:")
@@ -196,7 +192,7 @@ def ask_params() -> dict:
 
 
 # ===========================================================================
-# Flujo: retomar solicitud pendiente
+# Retomar solicitud pendiente
 # ===========================================================================
 
 def run_retomar(request_id: str, fiel, timeout_min: int | None) -> bool:
@@ -206,9 +202,6 @@ def run_retomar(request_id: str, fiel, timeout_min: int | None) -> bool:
     Retorna True si completo exitosamente, False si sigue pendiente o fallo.
     """
     from core.config import CACHE_DIR
-    from core.cache_manager import elapsed_label
-
-    validate_salt()
 
     info = None
     rfc  = None
@@ -257,7 +250,7 @@ def run_retomar(request_id: str, fiel, timeout_min: int | None) -> bool:
 
     if result is None:
         log.warning(f"  Solicitud {request_id} sigue pendiente.")
-        log.warning(f"  Retoma con: python descarga_masiva.py --retomar {request_id}")
+        log.warning(f"  Retoma con: python cli/main.py --retomar {request_id}")
         return False
 
     packages   = result
@@ -286,8 +279,6 @@ def run_retomar_todas(rfc_target: str, timeout_min: int | None) -> None:
     """
     from core.config import CACHE_DIR
 
-    validate_salt()
-
     pending_files = list(CACHE_DIR.glob("*.pending.enc")) if CACHE_DIR.exists() else []
 
     if not pending_files:
@@ -309,9 +300,9 @@ def run_retomar_todas(rfc_target: str, timeout_min: int | None) -> None:
         for req_id in pending:
             ids_to_resume.append((rfc_file, req_id))
 
-    total          = len(ids_to_resume)
-    completed      = 0
-    failed         = 0
+    total         = len(ids_to_resume)
+    completed     = 0
+    failed        = 0
     still_pending: list[str] = []
     session_pwds: dict[str, str] = {}
 
@@ -372,249 +363,13 @@ def run_retomar_todas(rfc_target: str, timeout_min: int | None) -> None:
             log.info(f"    * --retomar {req_id}")
         log.info("")
         log.info("  Para retomar automaticamente con cron:")
-        log.info("  0 * * * * cd /ruta/proyecto && python descarga_masiva.py \\")
+        log.info("  0 * * * * cd /ruta/proyecto && python cli/main.py \\")
         log.info(f"    --retomar-todas {rfc_target}")
     log.info("=" * 65)
 
 
 # ===========================================================================
-# Flujo: Metadata mensual
-# ===========================================================================
-
-def run_metadata(fiel, params: dict, output_dir: Path) -> list[Path]:
-    """
-    Ejecuta la descarga de Metadata para cada mes en el rango.
-    Continua automaticamente si un mes no tiene CFDIs (codigo 5004).
-    Retorna la lista de archivos TXT descargados.
-    """
-    from core.config import MESES_ES
-
-    periods = generate_monthly_periods(params["inicio"], params["fin"])
-    total   = len(periods)
-
-    log.info("")
-    log.info(f"Modo METADATA — {total} mes(es) a procesar")
-    log.info(f"  RFC        : {params['rfc']}")
-    log.info(f"  Tipo       : {params['tipo']}")
-    log.info(f"  Rango      : {params['inicio']} -> {params['fin']}")
-    log.info(f"  Salida     : {output_dir.resolve()}")
-    log.info("  ZIPs se eliminaran automaticamente tras extraer cada TXT.")
-    log.info("  El script avanzara si un mes no tiene CFDIs (codigo 5004).")
-
-    all_files: list[Path] = []
-    months_with  = 0
-    months_empty = 0
-
-    for i, (month_start, month_end) in enumerate(periods, 1):
-        month_num = month_start.strftime("%m")
-        month_lbl = f"{MESES_ES[month_num]} {month_start.year}"
-
-        log.info("")
-        log.info(f"  +-- [{i}/{total}] {month_lbl}  ({month_start} -> {month_end})")
-
-        p_month = {**params, "inicio": month_start, "fin": month_end, "output": output_dir}
-
-        try:
-            token      = get_token(fiel)
-            request_id = request_download(fiel, token, p_month)
-
-            if not request_id:
-                log.info(f"  +-- {month_lbl}: Sin actividad — continuando.")
-                months_empty += 1
-                continue
-
-            verification = verify_raw(fiel, request_id, p_month)
-            estado       = int(verification.get("estado_solicitud", -1))
-            cod          = verification.get("codigo_estado_solicitud", "")
-            num_cfdi     = int(verification.get("numero_cfdis", 0) or 0)
-            packages     = verification.get("paquetes") or []
-
-            if estado == 5 and cod == "5004":
-                log.info(f"  +-- {month_lbl}: Sin CFDIs en este periodo — continuando.")
-                months_empty += 1
-                continue
-            if estado == 5:
-                log.warning(f"  +-- {month_lbl}: Rechazado por SAT (codigo {cod}) — continuando.")
-                months_empty += 1
-                continue
-            if estado != 3:
-                log.warning(f"  +-- {month_lbl}: Estado inesperado {estado} — continuando.")
-                months_empty += 1
-                continue
-
-            log.info(f"  |   {num_cfdi} CFDI(s) | {len(packages)} paquete(s)")
-
-            month_files: list[Path] = []
-            for j, pkg_id in enumerate(packages, 1):
-                zip_path = download_package(fiel, pkg_id, params["rfc"], output_dir, j, len(packages))
-                if zip_path:
-                    dest_name = f"{month_start.strftime('%Y-%m')}-{params['rfc']}"
-                    extracted = extract_metadata(zip_path, dest_name)
-                    month_files.extend(extracted)
-
-            log.info(f"  +-- {month_lbl}: {len(month_files)} archivo(s) guardados.")
-            all_files.extend(month_files)
-            months_with += 1
-
-        except Exception as e:
-            log.warning(f"  +-- {month_lbl}: Error inesperado ({e}) — continuando.")
-            months_empty += 1
-
-    log.info("")
-    log.info(f"  Meses con CFDIs    : {months_with}")
-    log.info(f"  Meses sin actividad: {months_empty}")
-    return all_files
-
-
-# ===========================================================================
-# Flujo: CFDI rango completo
-# ===========================================================================
-
-def run_cfdi(fiel, params: dict, output_dir: Path) -> list[Path]:
-    """
-    Ejecuta la descarga de CFDI para el rango completo.
-    Aplica bypass de offset automaticamente usando el cache encriptado.
-    Registra la solicitud como pendiente inmediatamente tras la aceptacion.
-    """
-    timeout_min = params.get("timeout")
-
-    log.info("")
-    log.info("Modo CFDI — procesando rango completo")
-    log.info(f"  RFC        : {params['rfc']}")
-    log.info(f"  Tipo       : {params['tipo']}")
-    log.info(f"  Rango      : {params['inicio']} -> {params['fin']}")
-    log.info(f"  Salida     : {output_dir.resolve()}")
-    log.info(f"  Timeout    : {f'{timeout_min} min' if timeout_min else 'sin limite'}")
-
-    history       = get_attempt_history(params["rfc"], params["inicio"],
-                                        params["fin"], params["tipo"])
-    prev_attempts = history["intentos"]
-
-    if prev_attempts == 0:
-        log.info("  Cache: primera solicitud para este periodo.")
-    else:
-        log.info(f"  Cache: {prev_attempts} intento(s) previo(s) detectado(s).")
-        log.info(f"  Bypass activado: offset de +{history['offset_segundos']}s.")
-
-    current_offset   = register_attempt(params["rfc"], params["inicio"],
-                                        params["fin"], params["tipo"])
-    dt_start, dt_end = apply_date_offset(params["inicio"], params["fin"], current_offset)
-
-    log.info(f"  Periodo efectivo : {dt_start} -> {dt_end}")
-
-    token      = get_token(fiel)
-    request_id = request_download(fiel, token, params, dt_start, dt_end)
-
-    if not request_id:
-        log.error("X No se pudo obtener un ID de solicitud del SAT.")
-        sys.exit(1)
-
-    add_pending(params["rfc"], request_id, params, dt_start, dt_end)
-
-    result = verify_with_timeout(fiel, request_id, params, timeout_min)
-
-    if result in ("rechazada", "vencida"):
-        remove_pending(params["rfc"], request_id, result)
-        log.error(f"X Solicitud {result}. No es posible recuperarla.")
-        sys.exit(1)
-
-    if result is None:
-        log.warning("")
-        log.warning("Proceso detenido por timeout.")
-        log.warning("La solicitud sigue registrada en pendientes.")
-        log.warning(f"Para retomar: python descarga_masiva.py --retomar {request_id}")
-        log.warning("O revisa todos: python descarga_masiva.py --pendientes")
-        sys.exit(0)
-
-    packages   = result
-    base_name  = f"{params['inicio'].strftime('%Y-%m')}-{params['rfc']}"
-    all_xmls: list[Path] = []
-
-    log.info(f"Iniciando descarga de {len(packages)} paquete(s)...")
-    for i, pkg_id in enumerate(packages, 1):
-        zip_path = download_package(fiel, pkg_id, params["rfc"], output_dir, i, len(packages))
-        if zip_path:
-            pkg_name = base_name if len(packages) == 1 else f"{base_name}_{i}"
-            xmls, _  = extract_cfdi(zip_path, pkg_name)
-            all_xmls.extend(xmls)
-
-    remove_pending(params["rfc"], request_id, "completada")
-    log.info(f"  Intento #  : {prev_attempts + 1} (offset: +{current_offset}s)")
-    log.info(f"  XMLs       : {len(all_xmls)} descargados")
-    return all_xmls
-
-
-# ===========================================================================
-# Flujo completo E2E: Metadata + Excel
-# ===========================================================================
-
-def run_full_flow(fiel, params: dict) -> None:
-    """
-    Ejecuta el flujo completo para un cliente:
-      Paso 1 — Descarga Metadata de emitidos (ingresos)
-      Paso 2 — Descarga Metadata de recibidos (gastos)
-      Paso 3 — Genera el Excel con Papel de Trabajo
-    """
-    log.info("")
-    log.info("=" * 65)
-    log.info("FLUJO COMPLETO — METADATA + EXCEL")
-    log.info(f"  RFC    : {params['rfc']}")
-    log.info(f"  Rango  : {params['inicio']} -> {params['fin']}")
-    log.info("=" * 65)
-
-    # Paso 1 — ingresos
-    log.info("")
-    log.info("PASO 1/3 — Descargando Metadata de INGRESOS (emitidos)...")
-    params_emitidos = {**params, "tipo": "emitidos", "solicitud": "Metadata"}
-    output_emitidos = resolve_output_dir(params_emitidos)
-    files_ingresos  = run_metadata(fiel, params_emitidos, output_emitidos)
-
-    # Paso 2 — gastos
-    log.info("")
-    log.info("PASO 2/3 — Descargando Metadata de GASTOS (recibidos)...")
-    params_recibidos = {**params, "tipo": "recibidos", "solicitud": "Metadata"}
-    output_recibidos = resolve_output_dir(params_recibidos)
-    files_gastos     = run_metadata(fiel, params_recibidos, output_recibidos)
-
-    # Paso 3 — Excel
-    log.info("")
-    log.info("PASO 3/3 — Generando Excel con Papel de Trabajo...")
-
-    try:
-        from core.excel_generator import generate_excel
-        isr_table  = resolve_isr_table(params.get("tabla_isr"))
-        despacho   = get_despacho_name(params.get("despacho"))
-
-        excel_path = generate_excel(
-            rfc             = params["rfc"],
-            start_date      = params["inicio"],
-            end_date        = params["fin"],
-            income_files    = files_ingresos,
-            expense_files   = files_gastos,
-            output_dir      = params["output"],
-            isr_table       = isr_table,
-            despacho        = despacho,
-            regimen         = params.get("regimen", "resico"),
-            acumulado_anual = params.get("acumulado_anual", False),
-            excel_mode      = params.get("excel", "completo") or "completo",
-        )
-        log.info(f"  Excel generado: {excel_path}")
-    except ImportError:
-        log.warning("  ! Modulo excel_generator no disponible aun.")
-        log.warning("    El Excel se generara en la siguiente iteracion.")
-    except Exception as e:
-        log.error(f"  X Error al generar Excel. Causa: {e}")
-
-    log.info("")
-    log.info("=" * 65)
-    log.info("FLUJO COMPLETO FINALIZADO")
-    log.info(f"  Archivos de ingresos : {len(files_ingresos)}")
-    log.info(f"  Archivos de gastos   : {len(files_gastos)}")
-    log.info("=" * 65)
-
-
-# ===========================================================================
-# CLI
+# CLI — parse_args
 # ===========================================================================
 
 def parse_args() -> dict | None:
@@ -627,7 +382,7 @@ def parse_args() -> dict | None:
         return None
 
     p = argparse.ArgumentParser(
-        prog="descarga_masiva.py",
+        prog="python cli/main.py",
         description=(
             "taxcrawler-dm — Descarga masiva de CFDI (XML) del SAT\n"
             "Consume el Web Service oficial del SAT v1.5 sin APIs de terceros.\n"
@@ -645,6 +400,7 @@ def parse_args() -> dict | None:
             "Documentacion:\n"
             "  FLOWS.md   — descripcion de cada flujo\n"
             "  ROADMAP.md — estado y funcionalidades planeadas\n"
+            "  docs/      — especificaciones completas del proyecto\n"
             "\n"
             "Variables de entorno (.env):\n"
             "  SAT_CACHE_SALT    — salt para encriptar el cache (obligatorio)\n"
@@ -667,41 +423,41 @@ def parse_args() -> dict | None:
                         help="Descifra y muestra el historial de intentos.")
 
     g_desc = p.add_argument_group("descarga")
-    g_desc.add_argument("--rfc",       metavar="RFC",        default=None,
+    g_desc.add_argument("--rfc",       metavar="RFC",            default=None,
                         help="RFC del contribuyente. Ejemplo: XAXX010101000.")
-    g_desc.add_argument("--cer",       type=Path,            default=None, metavar="RUTA",
+    g_desc.add_argument("--cer",       type=Path,                default=None, metavar="RUTA",
                         help="Ruta al .cer de la FIEL. Opcional si hay perfil guardado.")
-    g_desc.add_argument("--key",       type=Path,            default=None, metavar="RUTA",
+    g_desc.add_argument("--key",       type=Path,                default=None, metavar="RUTA",
                         help="Ruta al .key de la FIEL. Opcional si hay perfil guardado.")
-    g_desc.add_argument("--password",  default=None,         metavar="PASS",
+    g_desc.add_argument("--password",  default=None,             metavar="PASS",
                         help="Contrasena FIEL. Si se omite, se solicita de forma segura.")
-    g_desc.add_argument("--inicio",    type=date.fromisoformat, default=None, metavar="YYYY-MM-DD",
+    g_desc.add_argument("--inicio",    type=date.fromisoformat,  default=None, metavar="YYYY-MM-DD",
                         help="Fecha de inicio del periodo.")
-    g_desc.add_argument("--fin",       type=date.fromisoformat, default=None, metavar="YYYY-MM-DD",
+    g_desc.add_argument("--fin",       type=date.fromisoformat,  default=None, metavar="YYYY-MM-DD",
                         help="Fecha de fin del periodo.")
     g_desc.add_argument("--tipo",      choices=["emitidos", "recibidos"], default="recibidos",
                         help="Tipo de CFDI. Default: %(default)s.")
     g_desc.add_argument("--solicitud", choices=["CFDI", "Metadata"],      default="CFDI",
                         help="Tipo de solicitud. Default: %(default)s.")
-    g_desc.add_argument("--timeout",   type=int, default=None, metavar="MINUTOS",
+    g_desc.add_argument("--timeout",   type=int, default=None,   metavar="MINUTOS",
                         help="Minutos maximos de espera al SAT. Default: sin limite.")
-    g_desc.add_argument("--output",    type=Path, default=None, metavar="RUTA",
+    g_desc.add_argument("--output",    type=Path, default=None,  metavar="RUTA",
                         help="Carpeta base de salida. Default: ./results_RFC.")
-    g_desc.add_argument("--intervalo", type=int, default=60,   metavar="SEG",
+    g_desc.add_argument("--intervalo", type=int, default=60,     metavar="SEG",
                         help="Segundos entre verificaciones. Minimo 10. Default: %(default)s.")
 
     g_excel = p.add_argument_group("excel y papel de trabajo")
-    g_excel.add_argument("--excel",          choices=["resumen", "detalle", "completo"], default=None,
+    g_excel.add_argument("--excel",           choices=["resumen", "detalle", "completo"], default=None,
                          help="Modo de generacion del Excel.")
-    g_excel.add_argument("--flujo-completo", action="store_true", default=False,
+    g_excel.add_argument("--flujo-completo",  action="store_true", default=False,
                          help="Descarga Metadata (ingresos + gastos) y genera el Excel.")
-    g_excel.add_argument("--regimen",        choices=["resico", "pfae"], default="resico",
+    g_excel.add_argument("--regimen",         choices=["resico", "pfae"], default="resico",
                          help="Regimen fiscal para calculos ISR. Default: %(default)s.")
     g_excel.add_argument("--acumulado-anual", action="store_true", default=False,
                          help="Mantiene un Excel anual acumulado (Opcion B).")
-    g_excel.add_argument("--despacho",       default=None, metavar="NOMBRE",
+    g_excel.add_argument("--despacho",        default=None, metavar="NOMBRE",
                          help='Nombre del despacho entre comillas. Sobreescribe DESPACHO_NOMBRE del .env.')
-    g_excel.add_argument("--tabla-isr",      default=None, metavar="RUTA",
+    g_excel.add_argument("--tabla-isr",       default=None, metavar="RUTA",
                          help="CSV con tabla ISR personalizada. Sobreescribe TABLA_ISR_PATH del .env.")
 
     args = p.parse_args()
@@ -803,7 +559,6 @@ def parse_args() -> dict | None:
             args.intervalo = profile["intervalo"]
             log.info(f"  intervalo tomado del perfil: {args.intervalo}s")
 
-    # Para --flujo-completo, inicio y fin son obligatorios pero no cer/key si hay perfil
     missing = [f"--{f}" for f, v in [
         ("cer", args.cer), ("key", args.key),
         ("inicio", args.inicio), ("fin", args.fin)
@@ -853,30 +608,48 @@ def main() -> None:
 
     validate_salt()
 
-    fiel = load_fiel(params["cer"], params["key"], params["password"])
-
     # --- Flujo completo E2E ---
     if params.get("flujo_completo"):
         log.info("Modo: FLUJO COMPLETO (Metadata ingresos + gastos + Excel)")
-        run_full_flow(fiel, params)
-        write_profile(params["rfc"], params["cer"], params["key"],
-                      params["output"], params["intervalo"])
+
+        isr_table = resolve_isr_table(params.get("tabla_isr"))
+        despacho  = get_despacho_name(params.get("despacho"))
+
+        excel_path = full_flow(
+            rfc        = params["rfc"],
+            cer_path   = params["cer"],
+            key_path   = params["key"],
+            password   = params["password"],
+            start_date = params["inicio"],
+            end_date   = params["fin"],
+            output_dir = params["output"],
+            intervalo  = params["intervalo"],
+            despacho   = despacho,
+            tabla_isr  = isr_table,
+            regimen    = params.get("regimen", "resico"),
+        )
+
         duration = int((datetime.now() - start_time).total_seconds())
         log.info(f"Duracion total: {duration // 60}m {duration % 60}s")
+        if excel_path:
+            log.info(f"Excel generado: {excel_path}")
         return
 
     validate_params(params)
-    output_dir = resolve_output_dir(params)
 
     # --- Metadata ---
     if params["solicitud"] == "Metadata":
-        all_files = run_metadata(fiel, params, output_dir)
-
-        if all_files:
-            write_profile(params["rfc"], params["cer"], params["key"],
-                          params["output"], params["intervalo"])
-        else:
-            log.warning("  ! No se descargo ningun archivo — perfil no actualizado.")
+        all_files = download_metadata(
+            rfc        = params["rfc"],
+            cer_path   = params["cer"],
+            key_path   = params["key"],
+            password   = params["password"],
+            start_date = params["inicio"],
+            end_date   = params["fin"],
+            tipo       = params["tipo"],
+            output_dir = params["output"],
+            intervalo  = params["intervalo"],
+        )
 
         summary  = generate_metadata_summary(all_files, params)
         duration = int((datetime.now() - start_time).total_seconds())
@@ -889,7 +662,7 @@ def main() -> None:
         log.info(f"  Tipo                 : {params['tipo']}")
         log.info(f"  Rango procesado      : {params['inicio']} -> {params['fin']}")
         log.info(f"  Archivos descargados : {len(all_files)}")
-        log.info(f"  Carpeta de salida    : {output_dir.resolve()}")
+        log.info(f"  Carpeta de salida    : {params['output']}")
         log.info(f"  Duracion total       : {duration // 60}m {duration % 60}s")
         log.info(f"  Log guardado en      : sat_descarga.log")
         log.info("=" * 65)
@@ -903,13 +676,18 @@ def main() -> None:
 
     # --- CFDI ---
     else:
-        all_xmls = run_cfdi(fiel, params, output_dir)
-
-        if all_xmls:
-            write_profile(params["rfc"], params["cer"], params["key"],
-                          params["output"], params["intervalo"])
-        else:
-            log.warning("  ! No se descargo ningun XML — perfil no actualizado.")
+        all_xmls = download_cfdi(
+            rfc        = params["rfc"],
+            cer_path   = params["cer"],
+            key_path   = params["key"],
+            password   = params["password"],
+            start_date = params["inicio"],
+            end_date   = params["fin"],
+            tipo       = params["tipo"],
+            output_dir = params["output"],
+            intervalo  = params["intervalo"],
+            timeout_min= params.get("timeout"),
+        )
 
         duration = int((datetime.now() - start_time).total_seconds())
         log.info("")
@@ -920,7 +698,7 @@ def main() -> None:
         log.info(f"  Tipo                 : {params['tipo']}")
         log.info(f"  Rango solicitado     : {params['inicio']} -> {params['fin']}")
         log.info(f"  XMLs descargados     : {len(all_xmls)}")
-        log.info(f"  Carpeta de salida    : {output_dir.resolve()}")
+        log.info(f"  Carpeta de salida    : {params['output']}")
         log.info(f"  Duracion total       : {duration // 60}m {duration % 60}s")
         log.info(f"  Log guardado en      : sat_descarga.log")
         if params.get("excel"):

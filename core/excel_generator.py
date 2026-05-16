@@ -29,7 +29,7 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
-_libs = Path(__file__).resolve().parent / "libs"
+_libs = Path(__file__).resolve().parent.parent / "libs"
 if _libs.exists() and str(_libs) not in sys.path:
     sys.path.insert(0, str(_libs))
 

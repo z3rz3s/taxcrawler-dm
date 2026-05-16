@@ -14,7 +14,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Dependencias locales — libs/ tiene prioridad sobre el sistema
 # ---------------------------------------------------------------------------
-_libs = Path(__file__).resolve().parent / "libs"
+_libs = Path(__file__).resolve().parent.parent / "libs"
 if _libs.exists() and str(_libs) not in sys.path:
     sys.path.insert(0, str(_libs))
 

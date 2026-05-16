@@ -146,16 +146,40 @@ excel_generator.py → read parsed records, calculate IVA/ISR, write Excel workb
 
 ## Installation
 
+### Mac / Linux
+
 ```bash
-# Clone the repository
 git clone https://github.com/cvaldezscse/taxcrawler-dm.git
 cd taxcrawler-dm
-
-# Install all dependencies into the local libs/ folder (no virtualenv needed)
-python3.13 -m pip install cfdiclient openpyxl python-dotenv --target ./libs --break-system-packages
+chmod +x install.sh start.sh
+./install.sh
 ```
 
-The script automatically detects and uses `libs/`. No system-wide installation or virtual environment required.
+### Windows
+
+```bat
+git clone https://github.com/cvaldezscse/taxcrawler-dm.git
+cd taxcrawler-dm
+install.bat
+```
+
+The install script:
+
+- Installs all dependencies into `./libs/` (no virtualenv required, like `node_modules`)
+- Installs `uvicorn` system-wide (needed to run the API server)
+- Installs `tkinter` via Homebrew on Mac if not available (required for desktop UI)
+- Creates `.env` from `.env.example` with an auto-generated `SAT_CACHE_SALT`
+
+> **Windows note:** `SAT_CACHE_SALT` cannot be auto-generated on Windows. After running `install.bat`, open `.env` and set it manually to any long random string.
+
+### Manual installation (any OS)
+
+```bash
+python3 -m pip install cfdiclient openpyxl python-dotenv cryptography fastapi uvicorn customtkinter requests --target ./libs --break-system-packages
+python3 -m pip install uvicorn --break-system-packages
+cp .env.example .env
+# Edit .env and set SAT_CACHE_SALT
+```
 
 ---
 
@@ -190,6 +214,29 @@ openssl rand -base64 32
 ```
 
 Make sure `.env` is in your `.gitignore` — it should never be committed to the repository. A `.env.example` file is included as a template.
+
+---
+
+## Starting the Application
+
+### Desktop UI + API Server (recommended)
+
+```bash
+# Mac/Linux
+./start.sh
+
+# Windows
+start.bat
+```
+
+This starts the API server in the background and opens the desktop UI.
+
+### Other modes
+
+```bash
+./start.sh --api    # API server only (access docs at http://localhost:8000/docs)
+./start.sh --cli    # CLI interactive mode
+```
 
 ---
 
