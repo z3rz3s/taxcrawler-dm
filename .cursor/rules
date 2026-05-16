@@ -1,0 +1,47 @@
+# taxcrawler-dm — Cursor Rules
+
+## Before any task
+
+Read @docs/process/llm-continuity.md for current state and next steps.
+Read @docs/specification/system-modules.md for module responsibilities.
+Read @docs/process/spec-rules.md for rules that must never be violated.
+
+## Segment hierarchy
+
+cli/ api/ ui/ -> services/ -> core/
+Never skip a layer. core/ has no knowledge of any other segment.
+
+## Code conventions
+
+- Code in English
+- Comments and docstrings in Spanish (ASCII only, no accents or tildes)
+- sys.exit() only in cli/main.py
+- Every user-visible action produces a log entry
+- Passwords never stored in any file
+
+## libs/ path resolution
+
+\_libs = Path(**file**).resolve().parent.parent / "libs"
+
+## Before any change
+
+- State which US-XXX user story this belongs to (@docs/specification/user-stories.md)
+- State which test case validates this (@docs/specification/test-cases.md)
+- Confirm no regression tests break (@docs/specification/test-cases.md section 9)
+
+## Never without explicit approval
+
+- Modify docs/
+- Delete files
+- Change core/ function signatures
+- Add dependencies outside libs/
+- Call sys.exit() outside cli/main.py
+
+## Full spec
+
+@docs/foundation/architecture.md
+@docs/specification/system-modules.md
+@docs/specification/cli-contract.md
+@docs/specification/api-contract.md
+@docs/specification/ui-spec.md
+@docs/specification/test-cases.md

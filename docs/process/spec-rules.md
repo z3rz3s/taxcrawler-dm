@@ -115,3 +115,56 @@ Interface logic means:
 - User prompts (getpass is allowed in config.py only)
 
 Any of these found in core/ is a violation
+
+---
+
+# Rule 15 — Test Cases Are Part of the Contract
+
+Every feature must have at least one test case defined in specification/test-cases.md before implementation begins.
+
+Test case IDs follow this naming convention: module_function_scenario_p0 <- positive (should work) module_function_scenario_n0 <- negative (should fail gracefully)
+
+No feature is considered complete until its test cases pass.
+
+---
+
+# Rule 11 — Segment Separation
+
+No segment skips a layer:
+
+- cli/, api/, ui/ call services/ only
+- services/ calls core/ only
+- core/ has no knowledge of cli/, api/, ui/, or services/
+
+---
+
+# Rule 12 — Single libs/ Folder
+
+All dependencies install to the root libs/ folder No segment has its own dependency folder All segments resolve libs/ using parent.parent path from their own location
+
+---
+
+# Rule 13 — No Business Logic Outside core/
+
+Business logic means:
+
+- SAT communication rules
+- CFDI filtering rules
+- ISR and IVA calculation rules
+- Cache encryption and key derivation
+- File naming and organization rules
+
+Any of these found in services/, cli/, api/, or ui/ is a violation
+
+---
+
+# Rule 14 — No Interface Logic Inside core/
+
+Interface logic means:
+
+- CLI argument parsing
+- HTTP request/response handling
+- UI widget rendering
+- User prompts (getpass is allowed in config.py only)
+
+Any of these found in core/ is a violation
