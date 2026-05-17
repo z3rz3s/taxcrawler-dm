@@ -123,19 +123,28 @@ Provide a graphical interface for non-technical users (accountants).
 
 Completed:
 
-- ui/main.py with 3-screen flow
-- Screen 1: Configuration with file pickers for .cer and .key
-- Screen 2: Progress with live log panel and cancel button
-- Screen 3: Results with Excel open button and pending requests panel
-- RFC profile auto-fill via GET /cache/profile/{rfc}
-- Server availability check on startup
-- Long-running operations in background thread
-- TODO markers for auth header (Phase 6)
+- ui/ split into 5 files by responsibility:
+  - main.py: navigation with pack/pack_forget (replaces CTkTabview to avoid widget overlap)
+  - api_client.py: HTTP client with TODO markers for auth header
+  - widgets.py: DateWidget, SearchBar, FileCard, PendingCard, ProfileCard
+  - screen_download.py: Tab Descarga with form + progress panel
+  - screen_results.py: Tab Resultados with Archivos | Pendientes | Perfiles subtabs
+- 2-tab navigation always visible (Descarga | Resultados)
+- Server status indicator (green/red dot) in header
+- DateWidget: text field with auto-dash insertion + dark Calendar popup
+- Tab Archivos: loads from encrypted results history GET /cache/results
+- FileCard: icon, name, meta (fecha/RFC/operacion), file existence check, Abrir + delete buttons
+- Tab Pendientes: PendingCard with Retomar (opens progress with polling) + Ignorar buttons
+- Tab Perfiles: ProfileCard with FIEL status badge, Usar perfil button, double-click support
+- Usar perfil navigates to Descarga tab and fills form cleanly
+- FIEL errors shown as friendly dialog with 3 verification points
+- keep_zip checkbox for CFDI downloads
+- Despacho field visible only in Flujo completo operation
+- Encrypted results history: portable between PCs with same SAT_CACHE_SALT
+- GET /cache/profiles endpoint — reads all .profile.enc files
+- GET /cache/results, DELETE /cache/results/{id} endpoints
 - install.sh / install.bat — one-command installation
-- start.sh / start.bat — one-command startup
-
-Note: ui/ calls api/ via HTTP — not services/ directly.
-This allows auth to be added in one place (api/ layer) in Phase 6.
+- start.sh / start.bat — one-command startup with --api and --cli modes
 
 ---
 
@@ -148,14 +157,15 @@ Activities:
 
 - Decide on auth method with team
 - Add auth middleware to api/main.py
-- Update ui/main.py api_post() and api_get() with auth header
+- Update api_client.py api_post() and api_get() with auth header (TODO markers present)
 - Add API_USERNAME, API_PASSWORD or SECRET_KEY to .env.example
 - Update api-contract.md with auth requirements
-- Test all endpoints with credentials
+- Test all endpoints with and without credentials
 
 Constraint:
 core/ and services/ must have no knowledge of auth.
 Auth is handled exclusively in api/ layer.
+ui/api_client.py is the only file that needs the auth header.
 
 ---
 

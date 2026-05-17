@@ -103,13 +103,30 @@ def extract_metadata(zip_path: Path, dest_name: str) -> list[Path]:
 # Extraccion de CFDI (XML)
 # ===========================================================================
 
-def extract_cfdi(zip_path: Path, dest_name: str) -> tuple[list[Path], Path | None]:
+def _unique_zip_path(directory: Path, dest_name: str) -> Path:
     """
-    Extrae los XMLs del ZIP en una subcarpeta YYYY-MM-RFC/
-    y renombra el ZIP a YYYY-MM-RFC.zip para trazabilidad.
-    Conserva el ZIP renombrado — no lo elimina.
+    Genera una ruta unica para el ZIP de CFDI.
+    Si YYYY-MM-RFC.zip ya existe, agrega sufijo: _2, _3, etc.
+    """
+    candidate = directory / f"{dest_name}.zip"
+    if not candidate.exists():
+        return candidate
+    counter = 2
+    while True:
+        candidate = directory / f"{dest_name}_{counter}.zip"
+        if not candidate.exists():
+            log.info(f"  ZIP con nombre existente — usando: {candidate.name}")
+            return candidate
+        counter += 1
 
-    Retorna (lista de XMLs extraidos, ruta al ZIP renombrado).
+
+def extract_cfdi(zip_path: Path, dest_name: str,
+                 keep_zip: bool = True) -> tuple[list[Path], Path | None]:
+    """
+    Extrae los XMLs del ZIP en una subcarpeta YYYY-MM-RFC/.
+    Si keep_zip es True: conserva el ZIP renombrado con nombre unico.
+    Si keep_zip es False: elimina el ZIP tras extraer.
+    Retorna (lista de XMLs extraidos, ruta al ZIP o None).
     """
     output_dir = zip_path.parent
     xml_dir    = output_dir / dest_name
@@ -122,17 +139,22 @@ def extract_cfdi(zip_path: Path, dest_name: str) -> tuple[list[Path], Path | Non
         with zipfile.ZipFile(zip_path, "r") as zf:
             xmls = [n for n in zf.namelist() if n.lower().endswith(".xml")]
             log.info(f"  XMLs en el paquete: {len(xmls)}")
-
             for name in xmls:
                 dest = xml_dir / name
                 dest.write_bytes(zf.read(name))
                 extracted.append(dest)
 
-        new_zip = output_dir / f"{dest_name}.zip"
-        zip_path.rename(new_zip)
-        log.info(f"  ZIP renombrado: {new_zip.name}")
-        log.info(f"  {len(extracted)} XML(s) extraidos en: {xml_dir.name}/")
-        return extracted, new_zip
+        if keep_zip:
+            new_zip = _unique_zip_path(output_dir, dest_name)
+            zip_path.rename(new_zip)
+            log.info(f"  ZIP renombrado: {new_zip.name}")
+            log.info(f"  {len(extracted)} XML(s) extraidos en: {xml_dir.name}/")
+            return extracted, new_zip
+        else:
+            zip_path.unlink()
+            log.info(f"  ZIP eliminado: {zip_path.name}")
+            log.info(f"  {len(extracted)} XML(s) extraidos en: {xml_dir.name}/")
+            return extracted, None
 
     except zipfile.BadZipFile:
         log.error(f"  X ZIP corrupto: {zip_path}")

@@ -58,8 +58,8 @@ Responsibility:
 
 Operations:
 
-- _read_enc(rfc, path) -> dict
-- _write_enc(rfc, path, data) -> None
+- \_read_enc(rfc, path) -> dict
+- \_write_enc(rfc, path, data) -> None
 - get_attempt_history(rfc, start, end, tipo) -> dict
 - register_attempt(rfc, start, end, tipo) -> int
 - add_pending(rfc, request_id, params, dt_start, dt_end) -> None
@@ -174,7 +174,9 @@ Responsibility:
 
 Operations:
 
-- generate_excel(rfc, start_date, end_date, income_files, expense_files, output_dir, isr_table, despacho, regimen, acumulado_anual, excel_mode) -> Path
+- generate_excel(rfc, start_date, end_date, income_files, expense_files,
+  output_dir, isr_table, despacho, regimen,
+  acumulado_anual, excel_mode) -> Path
 
 Sheet order (always fixed):
 
@@ -227,9 +229,13 @@ Responsibility:
 
 Operations:
 
-- download_metadata(rfc, cer_path, key_path, password, start_date, end_date, tipo, output_dir, intervalo) -> list[Path]
-- download_cfdi(rfc, cer_path, key_path, password, start_date, end_date, tipo, output_dir, intervalo, timeout_min) -> list[Path]
-- full_flow(rfc, cer_path, key_path, password, start_date, end_date, output_dir, intervalo, timeout_min, despacho, tabla_isr, regimen) -> Path
+- download_metadata(rfc, cer_path, key_path, password, start_date, end_date,
+  tipo, output_dir, intervalo) -> list[Path]
+- download_cfdi(rfc, cer_path, key_path, password, start_date, end_date,
+  tipo, output_dir, intervalo, timeout_min) -> list[Path]
+- full_flow(rfc, cer_path, key_path, password, start_date, end_date,
+  output_dir, intervalo, timeout_min, despacho, tabla_isr,
+  regimen) -> Path
 
 Constraint:
 
@@ -248,8 +254,12 @@ Responsibility:
 
 Operations:
 
-- generate_from_metadata(rfc, start_date, end_date, income_files, expense_files, output_dir, isr_table, despacho, regimen) -> Path
-- generate_from_cfdi(rfc, start_date, end_date, xml_dir, output_dir, isr_table, despacho, regimen) -> Path <- PLANNED (Phase 7)
+- generate_from_metadata(rfc, start_date, end_date, income_files,
+  expense_files, output_dir, isr_table,
+  despacho, regimen) -> Path
+- generate_from_cfdi(rfc, start_date, end_date, xml_dir,
+  output_dir, isr_table, despacho,
+  regimen) -> Path <- PLANNED (Phase 7)
 
 ---
 
@@ -336,23 +346,130 @@ Constraint:
 
 # SEGMENT: ui/
 
-## ui/main.py
+## ui/ — 5 files by responsibility
+
+### ui/main.py
 
 Responsibility:
 
-- Initialize CustomTkinter application
-- Render 3 screens
-- Call services/ functions on user interaction
-- Display logs in real time
+- Initialize CustomTkinter application window
+- Manage navigation between Descarga and Resultados tabs
+- Connect callbacks between screen_download and screen_results
 
-Screens:
+Navigation:
 
-- Configuration: RFC, FIEL paths, password, date range, despacho
-- Progress: live log panel, phase indicator, cancel button
-- Results: file list, open Excel button, pending requests panel
+- Uses pack/pack_forget instead of CTkTabview
+- CTkTabview caused widget overlap when switching tabs dynamically
+- \_show_tab(tab) hides all frames then shows only the selected one
+- Server status dot in header updates every 10 seconds
 
 Constraint:
 
-- Must not call core/ directly
 - Must not contain business logic
-- Calls services/ directly (not through api/)
+- Must not call api/ directly
+
+---
+
+### ui/api_client.py
+
+Responsibility:
+
+- Centralize all HTTP communication with the API
+- Provide api_post(), api_get(), check_server() functions
+- Single place to add auth header when Phase 6 is implemented
+
+Operations:
+
+- api_post(endpoint, body) -> dict
+- api_get(endpoint) -> dict
+- check_server() -> bool
+
+Constraint:
+
+- TODO markers in api_post() and api_get() for auth header
+- All calls use API_TIMEOUT = 300 seconds for long SAT operations
+
+---
+
+### ui/widgets.py
+
+Responsibility:
+
+- Provide reusable UI components used by screen_download and screen_results
+
+Components:
+
+- DateWidget: text field with auto-dash insertion (YYYY-MM-DD format)
+  - Cal button opening dark-themed Calendar popup
+- SearchBar: text field with clear button, calls on_change on every keystroke
+- FileCard: icon, file name, short path, fecha/RFC/operacion meta,
+  file existence check (⚠ if not found), Abrir + 🗑 buttons
+- PendingCard: RFC, period, type, elapsed, Retomar + Ignorar buttons
+- ProfileCard: RFC header, FIEL status badge (green/orange),
+  output path, saved date, Usar perfil button + double-click
+
+Note: split into widgets/ subfolder when any component exceeds 300 lines.
+
+---
+
+### ui/screen_download.py
+
+Responsibility:
+
+- Tab Descarga: configuration form and progress panel
+- Call api_client.py for all API communication
+
+Screens (within same frame):
+
+- Form: operation selector, RFC, FIEL pickers, date pickers, tipo,
+  despacho (full_flow only), timeout (CFDI only), keep_zip checkbox,
+  regimen, output folder
+- Progress: live log panel, phase indicator, cancel + nueva descarga buttons
+
+Operations:
+
+- fill_from_profile(profile): rebuilds form and fills fields from profile dict
+- Calls POST /download/metadata, /download/cfdi, /download/full-flow
+- Logs request body with password masked as \*\*\*
+- On complete: calls on_result(result) callback
+
+---
+
+### ui/screen_results.py
+
+Responsibility:
+
+- Tab Resultados with 3 subtabs: Archivos | Pendientes | Perfiles
+- Call api_client.py for all API communication
+
+Tab Archivos:
+
+- Loads from GET /cache/results (encrypted history)
+- Renders FileCard per entry — Excel, folder for XMLs, TXT files
+- Search filters by RFC, filename, operacion, fecha
+- Delete button calls DELETE /cache/results/{id}
+
+Tab Pendientes:
+
+- Loads from GET /cache/pending
+- Renders PendingCard per request
+- Retomar opens progress window with polling via POST /download/resume/{id}
+- Ignorar refreshes the list (request stays in cache)
+
+Tab Perfiles:
+
+- Loads from GET /cache/profiles (reads all .profile.enc files)
+- Renders ProfileCard per profile
+- Usar perfil calls on_use_profile(profile) callback -> navigates to Descarga tab
+
+Constraint:
+
+- Must not call core/ or services/ directly
+- All data loaded from API endpoints
+
+---
+
+Start sequence:
+Terminal 1: python3 -m uvicorn api.main:app --reload
+Terminal 2: python3 ui/main.py
+Or combined: ./start.sh

@@ -1,8 +1,12 @@
 # TEST CASES — taxcrawler-dm
 
-This document defines how to manually test the system. It is written for non-technical users who need to verify that the system works correctly.
+This document defines how to manually test the system.
+It is written for non-technical users who need to verify that the system works correctly.
 
-Each test has a unique ID using this naming convention: module_function_scenario_p0 <- p = positive (should work) module_function_scenario_n0 <- n = negative (should fail gracefully) The number at the end is the permutation index within the same scenario.
+Each test has a unique ID using this naming convention:
+module_function_scenario_p0 <- p = positive (should work)
+module_function_scenario_n0 <- n = negative (should fail gracefully)
+The number at the end is the permutation index within the same scenario.
 
 ---
 
@@ -30,12 +34,14 @@ Dummy data used in this document:
 
 ## download_metadata_oneMonth_p0
 
-What is being tested: System downloads Metadata TXT for a single month using password prompt.
+What is being tested:
+System downloads Metadata TXT for a single month using password prompt.
 
 Steps:
 
 1. Open terminal in project folder
-2. Run: python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --inicio 2025-01-01 --fin 2025-01-31 --solicitud Metadata --tipo recibidos --intervalo 30
+2. Run:
+   python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --inicio 2025-01-01 --fin 2025-01-31 --solicitud Metadata --tipo recibidos --intervalo 30
 3. Type FIEL password when prompted (input is hidden)
 4. Wait for completion
 
@@ -56,12 +62,14 @@ Should NOT happen:
 
 ## download_metadata_oneMonth_p1
 
-What is being tested: System downloads Metadata TXT for a single month with password passed as argument.
+What is being tested:
+System downloads Metadata TXT for a single month with password passed as argument.
 
 Steps:
 
 1. Open terminal in project folder
-2. Run: python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-01-01 --fin 2025-01-31 --solicitud Metadata --tipo recibidos --intervalo 30
+2. Run:
+   python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-01-01 --fin 2025-01-31 --solicitud Metadata --tipo recibidos --intervalo 30
 3. Wait for completion
 
 Expected result:
@@ -78,12 +86,14 @@ Should NOT happen:
 
 ## download_metadata_multiMonth_p0
 
-What is being tested: System downloads Metadata TXT for multiple months, one file per month.
+What is being tested:
+System downloads Metadata TXT for multiple months, one file per month.
 
 Steps:
 
 1. Open terminal in project folder
-2. Run: python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-01-01 --fin 2025-03-31 --solicitud Metadata --tipo recibidos --intervalo 30
+2. Run:
+   python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-01-01 --fin 2025-03-31 --solicitud Metadata --tipo recibidos --intervalo 30
 3. Wait for completion
 
 Expected result:
@@ -101,11 +111,13 @@ Should NOT happen:
 
 ## download_metadata_noActivity_n0
 
-What is being tested: System handles months with no invoices gracefully without stopping.
+What is being tested:
+System handles months with no invoices gracefully without stopping.
 
 Steps:
 
-1. Run Metadata for a period you know has no activity: python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2020-01-01 --fin 2020-01-31 --solicitud Metadata --tipo recibidos --intervalo 30
+1. Run Metadata for a period you know has no activity:
+   python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2020-01-01 --fin 2020-01-31 --solicitud Metadata --tipo recibidos --intervalo 30
 
 Expected result:
 
@@ -122,11 +134,13 @@ Should NOT happen:
 
 ## download_metadata_invalidCer_n0
 
-What is being tested: System fails clearly when the .cer file path does not exist.
+What is being tested:
+System fails clearly when the .cer file path does not exist.
 
 Steps:
 
-1. Run: python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/wrong.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-01-01 --fin 2025-01-31 --solicitud Metadata --tipo recibidos
+1. Run:
+   python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/wrong.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-01-01 --fin 2025-01-31 --solicitud Metadata --tipo recibidos
 
 Expected result:
 
@@ -143,11 +157,13 @@ Should NOT happen:
 
 ## download_metadata_wrongPassword_n0
 
-What is being tested: System fails clearly when the FIEL password is incorrect.
+What is being tested:
+System fails clearly when the FIEL password is incorrect.
 
 Steps:
 
-1. Run: python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password WrongPass123 --inicio 2025-01-01 --fin 2025-01-31 --solicitud Metadata --tipo recibidos
+1. Run:
+   python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password WrongPass123 --inicio 2025-01-01 --fin 2025-01-31 --solicitud Metadata --tipo recibidos
 
 Expected result:
 
@@ -164,13 +180,16 @@ Should NOT happen:
 
 ## download_metadata_profileAutoFill_p0
 
-What is being tested: System loads .cer, .key, and output from saved profile on second run.
+What is being tested:
+System loads .cer, .key, and output from saved profile on second run.
 
-Pre-condition: download_metadata_oneMonth_p0 must have run successfully at least once.
+Pre-condition:
+download_metadata_oneMonth_p0 must have run successfully at least once.
 
 Steps:
 
-1. Run without --cer, --key, or --output: python descarga_masiva.py --rfc XAXX010101000 --password M1C0ntr4s3n4 --inicio 2025-02-01 --fin 2025-02-28 --solicitud Metadata --tipo recibidos --intervalo 30
+1. Run without --cer, --key, or --output:
+   python descarga_masiva.py --rfc XAXX010101000 --password M1C0ntr4s3n4 --inicio 2025-02-01 --fin 2025-02-28 --solicitud Metadata --tipo recibidos --intervalo 30
 
 Expected result:
 
@@ -192,11 +211,13 @@ Should NOT happen:
 
 ## download_cfdi_firstAttempt_p0
 
-What is being tested: System downloads CFDI XML files for a period on the first attempt.
+What is being tested:
+System downloads CFDI XML files for a period on the first attempt.
 
 Steps:
 
-1. Run: python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-01-01 --fin 2025-01-31 --solicitud CFDI --tipo recibidos --intervalo 30 --timeout 30
+1. Run:
+   python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-01-01 --fin 2025-01-31 --solicitud CFDI --tipo recibidos --intervalo 30 --timeout 30
 2. Wait for completion or timeout
 
 Expected result:
@@ -216,9 +237,11 @@ Should NOT happen:
 
 ## download_cfdi_secondAttempt_p0
 
-What is being tested: System applies +1 second offset on second attempt for same period.
+What is being tested:
+System applies +1 second offset on second attempt for same period.
 
-Pre-condition: download_cfdi_firstAttempt_p0 must have run for the same period.
+Pre-condition:
+download_cfdi_firstAttempt_p0 must have run for the same period.
 
 Steps:
 
@@ -239,11 +262,13 @@ Should NOT happen:
 
 ## download_cfdi_timeoutPending_n0
 
-What is being tested: System saves request as pending when SAT takes longer than timeout.
+What is being tested:
+System saves request as pending when SAT takes longer than timeout.
 
 Steps:
 
-1. Run with a very short timeout: python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-06-01 --fin 2025-06-30 --solicitud CFDI --tipo recibidos --intervalo 30 --timeout 5
+1. Run with a very short timeout:
+   python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-06-01 --fin 2025-06-30 --solicitud CFDI --tipo recibidos --intervalo 30 --timeout 5
 2. Wait for timeout message
 
 Expected result:
@@ -267,13 +292,16 @@ Should NOT happen:
 
 ## pending_showAll_p0
 
-What is being tested: System shows all pending requests clearly.
+What is being tested:
+System shows all pending requests clearly.
 
-Pre-condition: At least one CFDI request must have timed out (run download_cfdi_timeoutPending_n0 first).
+Pre-condition:
+At least one CFDI request must have timed out (run download_cfdi_timeoutPending_n0 first).
 
 Steps:
 
-1. Run: python descarga_masiva.py --pendientes
+1. Run:
+   python descarga_masiva.py --pendientes
 
 Expected result:
 
@@ -290,14 +318,17 @@ Should NOT happen:
 
 ## pending_resumeSingle_p0
 
-What is being tested: System resumes a specific pending request and downloads the files.
+What is being tested:
+System resumes a specific pending request and downloads the files.
 
-Pre-condition: A pending request ID must be available from --pendientes output.
+Pre-condition:
+A pending request ID must be available from --pendientes output.
 
 Steps:
 
 1. Copy the request ID from --pendientes output
-2. Run: python descarga_masiva.py --retomar 3a4341a7-81d6-0000-0000-000000000000
+2. Run:
+   python descarga_masiva.py --retomar 3a4341a7-81d6-0000-0000-000000000000
 3. Type FIEL password when prompted
 4. Wait for completion or timeout
 
@@ -317,13 +348,16 @@ Should NOT happen:
 
 ## pending_resumeAll_p0
 
-What is being tested: System resumes all pending requests for all RFCs sequentially.
+What is being tested:
+System resumes all pending requests for all RFCs sequentially.
 
-Pre-condition: At least one pending request exists.
+Pre-condition:
+At least one pending request exists.
 
 Steps:
 
-1. Run: python descarga_masiva.py --retomar-todas all
+1. Run:
+   python descarga_masiva.py --retomar-todas all
 2. Type FIEL password for each RFC when prompted
 
 Expected result:
@@ -342,11 +376,13 @@ Should NOT happen:
 
 ## pending_wrongPassword_n0
 
-What is being tested: System skips an RFC gracefully when wrong password is provided during --retomar-todas.
+What is being tested:
+System skips an RFC gracefully when wrong password is provided during --retomar-todas.
 
 Steps:
 
-1. Run: python descarga_masiva.py --retomar-todas all
+1. Run:
+   python descarga_masiva.py --retomar-todas all
 2. Enter wrong password when prompted for one of the RFCs
 
 Expected result:
@@ -368,13 +404,16 @@ Should NOT happen:
 
 ## profile_showSaved_p0
 
-What is being tested: System shows saved RFC profile with file status.
+What is being tested:
+System shows saved RFC profile with file status.
 
-Pre-condition: At least one successful Metadata download must have completed.
+Pre-condition:
+At least one successful Metadata download must have completed.
 
 Steps:
 
-1. Run: python descarga_masiva.py --perfil XAXX010101000
+1. Run:
+   python descarga_masiva.py --perfil XAXX010101000
 
 Expected result:
 
@@ -391,12 +430,14 @@ Should NOT happen:
 
 ## profile_missingFile_n0
 
-What is being tested: System warns when a file in the saved profile no longer exists on disk.
+What is being tested:
+System warns when a file in the saved profile no longer exists on disk.
 
 Steps:
 
 1. Rename or delete the .cer file temporarily
-2. Run: python descarga_masiva.py --perfil XAXX010101000
+2. Run:
+   python descarga_masiva.py --perfil XAXX010101000
 
 Expected result:
 
@@ -417,13 +458,16 @@ Should NOT happen:
 
 ## cache_revealHistory_p0
 
-What is being tested: System decrypts and shows CFDI attempt history for an RFC.
+What is being tested:
+System decrypts and shows CFDI attempt history for an RFC.
 
-Pre-condition: At least one CFDI request must have been submitted.
+Pre-condition:
+At least one CFDI request must have been submitted.
 
 Steps:
 
-1. Run: python descarga_masiva.py --reveal-cache XAXX010101000
+1. Run:
+   python descarga_masiva.py --reveal-cache XAXX010101000
 
 Expected result:
 
@@ -440,11 +484,13 @@ Should NOT happen:
 
 ## cache_noHistory_n0
 
-What is being tested: System shows clear message when no CFDI history exists for an RFC.
+What is being tested:
+System shows clear message when no CFDI history exists for an RFC.
 
 Steps:
 
-1. Run with an RFC that has never had a CFDI request: python descarga_masiva.py --reveal-cache XAXX010101000
+1. Run with an RFC that has never had a CFDI request:
+   python descarga_masiva.py --reveal-cache XAXX010101000
 
 Expected result:
 
@@ -460,12 +506,14 @@ Should NOT happen:
 
 ## cache_missingSalt_n0
 
-What is being tested: System fails clearly when SAT_CACHE_SALT is not set in .env
+What is being tested:
+System fails clearly when SAT_CACHE_SALT is not set in .env
 
 Steps:
 
 1. Remove or comment out SAT_CACHE_SALT from .env
-2. Run any command: python descarga_masiva.py --pendientes
+2. Run any command:
+   python descarga_masiva.py --pendientes
 
 Expected result:
 
@@ -486,11 +534,13 @@ Should NOT happen:
 
 ## excel_fullFlow_singleMonth_p0
 
-What is being tested: System generates Excel working paper for a single month.
+What is being tested:
+System generates Excel working paper for a single month.
 
 Steps:
 
-1. Run: python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-03-01 --fin 2025-03-31 --flujo-completo --despacho "Despacho Ejemplo SC"
+1. Run:
+   python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-03-01 --fin 2025-03-31 --flujo-completo --despacho "Despacho Ejemplo SC"
 2. Wait for completion
 3. Open the .xlsx file in Microsoft Excel
 
@@ -511,16 +561,18 @@ Should NOT happen:
 
 ## excel_fullFlow_multiMonth_p0
 
-What is being tested: System generates Excel with data for multiple months stacked in each sheet.
+What is being tested:
+System generates Excel with data for multiple months stacked in each sheet.
 
 Steps:
 
-1. Run: python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-01-01 --fin 2025-03-31 --flujo-completo --despacho "Despacho Ejemplo SC"
+1. Run:
+   python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-01-01 --fin 2025-03-31 --flujo-completo --despacho "Despacho Ejemplo SC"
 2. Open the generated .xlsx file
 
 Expected result:
 
-- File named XAXX010101000_2025-01__2025-03.xlsx
+- File named XAXX010101000_2025-01\_\_2025-03.xlsx
 - ingresos sheet shows Enero, Febrero, Marzo blocks with separators
 - gastos sheet shows same monthly structure
 - INGRESOS YYYY sheet shows 12 months, January to March with data, rest blank
@@ -534,11 +586,13 @@ Should NOT happen:
 
 ## excel_emptyIncome_n0
 
-What is being tested: Excel generates correctly when RFC has no issued invoices (empty ingresos).
+What is being tested:
+Excel generates correctly when RFC has no issued invoices (empty ingresos).
 
 Steps:
 
-1. Run flujo-completo for an RFC that only receives invoices (no emissions): python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-01-01 --fin 2025-01-31 --flujo-completo --despacho "Despacho Ejemplo SC"
+1. Run flujo-completo for an RFC that only receives invoices (no emissions):
+   python descarga_masiva.py --rfc XAXX010101000 --cer certs/XAXX010101000/fiel.cer --key certs/XAXX010101000/fiel.key --password M1C0ntr4s3n4 --inicio 2025-01-01 --fin 2025-01-31 --flujo-completo --despacho "Despacho Ejemplo SC"
 2. Open the generated .xlsx file
 
 Expected result:
@@ -556,7 +610,8 @@ Should NOT happen:
 
 ## excel_cancelledExcluded_n0
 
-What is being tested: Cancelled CFDIs do not appear in any Excel sheet.
+What is being tested:
+Cancelled CFDIs do not appear in any Excel sheet.
 
 Steps:
 
@@ -578,7 +633,8 @@ Should NOT happen:
 
 ## excel_paymentComplements_n0
 
-What is being tested: Payment complements (tipo P) appear only as reference in gastos, never in totals.
+What is being tested:
+Payment complements (tipo P) appear only as reference in gastos, never in totals.
 
 Steps:
 
@@ -605,7 +661,8 @@ Should NOT happen:
 
 ## data_zeroAmountCfdi_p0
 
-What is being tested: CFDIs with zero amount appear in sheets without breaking calculations.
+What is being tested:
+CFDIs with zero amount appear in sheets without breaking calculations.
 
 Steps:
 
@@ -627,7 +684,8 @@ Should NOT happen:
 
 ## data_uppercaseLowercaseUuid_p0
 
-What is being tested: System handles UUIDs in any case format without duplication.
+What is being tested:
+System handles UUIDs in any case format without duplication.
 
 Steps:
 
@@ -652,14 +710,17 @@ Should NOT happen:
 
 ## setup_freshInstall_p0
 
-What is being tested: System installs and runs correctly from a clean state.
+What is being tested:
+System installs and runs correctly from a clean state.
 
 Steps:
 
 1. Clone the repository to a new folder
-2. Run: python -m pip install cfdiclient openpyxl python-dotenv cryptography --target ./libs --break-system-packages
+2. Run:
+   python -m pip install cfdiclient openpyxl python-dotenv cryptography --target ./libs --break-system-packages
 3. Copy .env.example to .env and set SAT_CACHE_SALT
-4. Run: python descarga_masiva.py --help
+4. Run:
+   python descarga_masiva.py --help
 
 Expected result:
 
@@ -676,12 +737,14 @@ Should NOT happen:
 
 ## setup_missingLibs_n0
 
-What is being tested: System fails clearly when libs/ folder is missing.
+What is being tested:
+System fails clearly when libs/ folder is missing.
 
 Steps:
 
 1. Rename libs/ to libs_backup/
-2. Run any command: python descarga_masiva.py --help
+2. Run any command:
+   python descarga_masiva.py --help
 
 Expected result:
 
@@ -697,12 +760,14 @@ Should NOT happen:
 
 ## setup_pathWithSpaces_p0
 
-What is being tested: System works correctly when project folder path contains spaces. (Windows specific)
+What is being tested:
+System works correctly when project folder path contains spaces. (Windows specific)
 
 Steps:
 
 1. Copy project to a folder with spaces in the path, e.g.: C:\My Projects\taxcrawler-dm
-2. Run: python descarga_masiva.py --help
+2. Run:
+   python descarga_masiva.py --help
 
 Expected result:
 
@@ -724,7 +789,8 @@ Run these after moving files to core/, services/, and cli/ to confirm behavior i
 
 ## regression_cliHelp_p0
 
-Steps: python cli/main.py --help
+Steps:
+python cli/main.py --help
 
 Expected: identical output to python descarga_masiva.py --help
 
@@ -732,7 +798,8 @@ Expected: identical output to python descarga_masiva.py --help
 
 ## regression_metadataDownload_p0
 
-Steps: Run same Metadata command using cli/main.py instead of descarga_masiva.py
+Steps:
+Run same Metadata command using cli/main.py instead of descarga_masiva.py
 
 Expected: identical files created, identical log output
 
@@ -740,7 +807,8 @@ Expected: identical files created, identical log output
 
 ## regression_profileSaved_p0
 
-Steps: Run Metadata, then check --perfil
+Steps:
+Run Metadata, then check --perfil
 
 Expected: profile saved and readable after restructure
 
@@ -748,7 +816,8 @@ Expected: profile saved and readable after restructure
 
 ## regression_pendingCreated_p0
 
-Steps: Run CFDI with short timeout, then check --pendientes
+Steps:
+Run CFDI with short timeout, then check --pendientes
 
 Expected: request appears in pending after restructure
 
@@ -756,6 +825,257 @@ Expected: request appears in pending after restructure
 
 ## regression_excelGenerated_p0
 
-Steps: Run --flujo-completo using cli/main.py
+Steps:
+Run --flujo-completo using cli/main.py
 
-Expected: identical Excel file generated, opens without errors
+## Expected: identical Excel file generated, opens without errors
+
+# 10. RESULTS HISTORY
+
+---
+
+## history_saveOnComplete_p0
+
+What is being tested:
+A completed operation is automatically saved to the encrypted results history.
+
+Steps:
+
+1. Run a full flow or metadata download via UI or CLI
+2. Open the Resultados tab in the UI
+3. Click on the Archivos subtab
+
+Expected result:
+
+- The downloaded files appear as cards with icon, name, date, RFC, and operation
+- Excel card shows Abrir button
+- TXT or XML cards show correct icons
+
+Should NOT happen:
+
+- Tab is empty after a completed download
+- Cards show no metadata (date, RFC, operation)
+
+---
+
+## history_fileExistsCheck_p0
+
+What is being tested:
+Cards correctly show whether the file exists on disk.
+
+Steps:
+
+1. Complete a download to generate history entries
+2. Rename or move the generated Excel file
+3. Refresh the Archivos tab
+
+Expected result:
+
+- Card shows: ⚠ Archivo no encontrado en este equipo
+- Abrir button is disabled or hidden
+
+Should NOT happen:
+
+- Card shows Abrir button for a file that does not exist
+- App crashes when file is missing
+
+---
+
+## history_deleteEntry_p0
+
+What is being tested:
+Deleting a history entry removes it from the list without deleting the file.
+
+Steps:
+
+1. Open Archivos tab with at least one entry
+2. Click the 🗑 button on a card
+3. Check that the file still exists on disk
+
+Expected result:
+
+- Card disappears from the list after delete
+- File still exists on disk at its original path
+- Refreshing the tab does not show the deleted entry
+
+Should NOT happen:
+
+- File is deleted from disk
+- Entry reappears after refresh
+
+---
+
+## history_multipleRFCs_p0
+
+What is being tested:
+History shows entries from multiple RFCs, not just the last one.
+
+Pre-condition:
+At least 2 different RFCs must have completed downloads.
+
+Steps:
+
+1. Open Archivos tab
+2. Check that entries from both RFCs appear
+
+Expected result:
+
+- Cards from RFC 1 and RFC 2 both visible
+- Each card shows its own RFC in the meta section
+
+Should NOT happen:
+
+- Only the most recent RFC appears
+- Older entries are overwritten
+
+---
+
+## history_portableCache_p0
+
+What is being tested:
+Results history is readable on another PC with the same SAT_CACHE_SALT.
+
+Steps:
+
+1. Copy .cache/results_history.enc to another PC
+2. Set the same SAT_CACHE_SALT in .env on the other PC
+3. Open the UI and check the Archivos tab
+
+Expected result:
+
+- History entries appear correctly
+- Files marked as ⚠ if paths do not exist on the new PC
+
+Should NOT happen:
+
+- Decryption fails with same salt
+- App crashes when opening foreign cache file
+
+---
+
+# 11. PROFILES LIST
+
+---
+
+## profiles_showAll_p0
+
+What is being tested:
+Perfiles tab shows all saved RFC profiles.
+
+Pre-condition:
+At least 2 RFCs must have completed downloads (profiles auto-saved).
+
+Steps:
+
+1. Open Resultados tab
+2. Click Perfiles subtab
+
+Expected result:
+
+- All saved profiles appear as ProfileCards
+- Each card shows RFC, FIEL status badge, output path, saved date
+
+Should NOT happen:
+
+- Only the most recent RFC profile appears
+- Tab is empty when profiles exist
+
+---
+
+## profiles_useProfile_p0
+
+What is being tested:
+Clicking Usar perfil fills the download form and navigates to Descarga tab.
+
+Steps:
+
+1. Open Perfiles tab
+2. Click Usar perfil on any card
+3. Check that the Descarga tab is now active
+
+Expected result:
+
+- Descarga tab becomes active
+- RFC, .cer, .key, and output folder are filled from the selected profile
+- No widget overlap or rendering issue
+
+Should NOT happen:
+
+- Tab does not change
+- Form fields are empty after selecting profile
+- Widgets from Resultados tab appear over the form
+
+---
+
+## profiles_fielsStatusBadge_p0
+
+What is being tested:
+Profile badge correctly reflects FIEL file existence on disk.
+
+Steps:
+
+1. Move or rename the .cer file for one RFC
+2. Refresh the Perfiles tab
+
+Expected result:
+
+- Badge changes to orange: ⚠ FIEL incompleta
+- .cer shows ✗ in the card body
+
+Should NOT happen:
+
+- Badge stays green when .cer is missing
+
+---
+
+# 12. REGRESSION CHECKLIST — UI Components
+
+Run after any change to ui/ files.
+
+---
+
+## regression_tabNavigation_p0
+
+Steps:
+
+1. Open the UI
+2. Click Resultados tab
+3. Click Descarga tab
+
+Expected: no widget overlap, clean render each time
+
+---
+
+## regression_profileFill_p0
+
+Steps:
+
+1. Open Perfiles tab
+2. Click Usar perfil
+3. Check Descarga tab
+
+Expected: form filled, no overlap, Iniciar button visible
+
+---
+
+## regression_pendingResume_p0
+
+Steps:
+
+1. Have at least one pending CFDI request
+2. Open Pendientes tab
+3. Click Retomar, enter password
+
+Expected: progress window opens, polling starts
+
+---
+
+## regression_historyPersists_p0
+
+Steps:
+
+1. Complete a download
+2. Close and reopen the UI
+3. Open Archivos tab
+
+Expected: previous download appears in history

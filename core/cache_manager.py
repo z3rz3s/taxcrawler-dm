@@ -358,3 +358,110 @@ def show_profile(rfc: str) -> None:
         log.warning("  Ejecuta una descarga con --cer y --key para actualizar el perfil.")
 
     log.info("=" * 65)
+
+# ===========================================================================
+# Historial de resultados — archivos generados por operacion
+# ===========================================================================
+
+def _results_history_path() -> Path:
+    """Ruta al archivo de historial de resultados (compartible entre PCs)."""
+    return CACHE_DIR / "results_history.enc"
+
+
+def _shared_fernet_key() -> bytes:
+    """
+    Clave Fernet compartida (no ligada a un RFC especifico).
+    Usa SAT_CACHE_SALT como base — misma clave en cualquier PC con el mismo salt.
+    """
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.primitives import hashes
+    import base64
+
+    salt = validate_salt()
+    kdf  = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100_000,
+    )
+    return base64.urlsafe_b64encode(kdf.derive(b"results_history"))
+
+
+def _read_results_enc() -> list:
+    """Lee y descifra el historial de resultados. Retorna lista vacia si no existe."""
+    from cryptography.fernet import Fernet, InvalidToken
+
+    path = _results_history_path()
+    if not path.exists():
+        return []
+    try:
+        f    = Fernet(_shared_fernet_key())
+        data = f.decrypt(path.read_bytes())
+        return json.loads(data.decode())
+    except (InvalidToken, Exception) as e:
+        log.warning(f"  ! No se pudo leer historial de resultados: {e}")
+        return []
+
+
+def _write_results_enc(history: list) -> None:
+    """Cifra y guarda el historial de resultados."""
+    from cryptography.fernet import Fernet
+
+    CACHE_DIR.mkdir(exist_ok=True)
+    try:
+        f         = Fernet(_shared_fernet_key())
+        encrypted = f.encrypt(json.dumps(history, ensure_ascii=False).encode())
+        _results_history_path().write_bytes(encrypted)
+    except Exception as e:
+        log.warning(f"  ! No se pudo guardar historial de resultados: {e}")
+
+
+def add_to_results_history(entry: dict) -> str:
+    """
+    Agrega una entrada al historial de resultados.
+    Genera un ID unico para la entrada.
+    Retorna el ID generado.
+    """
+    import uuid
+    history    = _read_results_enc()
+    entry_id   = str(uuid.uuid4())
+    entry["id"] = entry_id
+    history.insert(0, entry)  # mas reciente primero
+    # Mantener maximo 200 entradas
+    history = history[:200]
+    _write_results_enc(history)
+    log.info(f"  Resultado guardado en historial: {entry_id}")
+    return entry_id
+
+
+def get_results_history() -> list:
+    """
+    Retorna el historial de resultados.
+    Evalua en tiempo real si cada archivo excel_path existe en disco.
+    """
+    history = _read_results_enc()
+    for entry in history:
+        excel_path = entry.get("excel_path")
+        if excel_path:
+            entry["excel_exists"] = Path(excel_path).exists()
+        else:
+            entry["excel_exists"] = False
+        # Verificar archivos individuales
+        files = entry.get("files", [])
+        entry["files_exist"] = [Path(f).exists() for f in files]
+    return history
+
+
+def remove_from_results_history(entry_id: str) -> bool:
+    """
+    Elimina una entrada del historial por ID.
+    Retorna True si se encontro y elimino, False si no existe.
+    """
+    history  = _read_results_enc()
+    original = len(history)
+    history  = [e for e in history if e.get("id") != entry_id]
+    if len(history) < original:
+        _write_results_enc(history)
+        log.info(f"  Entrada eliminada del historial: {entry_id}")
+        return True
+    return False

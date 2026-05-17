@@ -155,15 +155,27 @@ Objective:
 Provide a graphical interface for non-technical users (accountants).
 Calls `api/` via HTTP — same auth layer as any future client.
 
-- ✅ Screen 1 — Configuration: RFC, FIEL file pickers, password, date range, despacho
-- ✅ Screen 2 — Progress: live log panel, phase indicator, cancel button
-- ✅ Screen 3 — Results: Excel path with open button, pending requests panel
-- ✅ RFC profile auto-fill when RFC is entered (via GET /cache/profile/{rfc})
-- ✅ Server availability check on startup and before each operation
-- ✅ Long-running SAT operations run in background thread
-- ✅ TODO markers for auth header (Basic or JWT) when auth is implemented
+- ✅ 2-tab navigation (Descarga | Resultados) with pack/pack_forget — no widget overlap
+- ✅ Server status indicator (green/red dot) in header, updates every 10 seconds
+- ✅ Tab Descarga: form with operation selector, FIEL file pickers, DateWidget, tipo, despacho
+- ✅ Despacho field visible only when Flujo completo is selected
+- ✅ DateWidget: text field with auto-dash insertion + dark Calendar popup
+- ✅ keep_zip checkbox for CFDI downloads with unique name suffix (\_2, \_3...)
+- ✅ Tab Resultados with 3 subtabs: Archivos | Pendientes | Perfiles
+- ✅ Archivos: loads from encrypted results history (GET /cache/results)
+- ✅ FileCard: icon, name, meta, file existence check (⚠), Abrir + 🗑 buttons
+- ✅ Pendientes: PendingCard with Retomar (password dialog + polling) + Ignorar
+- ✅ Perfiles: ProfileCard with FIEL status badge, Usar perfil button + double-click
+- ✅ Usar perfil navigates to Descarga tab and fills form cleanly
+- ✅ Search bar in each subtab filtering active content
+- ✅ FIEL errors shown as friendly dialog with 3 verification points
+- ✅ Encrypted results history portable between PCs with same SAT_CACHE_SALT
+- ✅ GET /cache/profiles — reads all .profile.enc files
+- ✅ GET /cache/results, DELETE /cache/results/{id} — history management
+- ✅ POST /download/resume/{id} — resume pending CFDI from UI
+- ✅ ui/ split into 5 files by responsibility
 - ✅ install.sh / install.bat — one-command installation
-- ✅ start.sh / start.bat — one-command startup (server + UI)
+- ✅ start.sh / start.bat — one-command startup (--api and --cli modes)
 - 📋 Anti-block semaphore (green/yellow/red) — planned improvement
 
 ---

@@ -66,7 +66,7 @@ MAX_DOWNLOAD_RETRIES = 3
 RETRY_PAUSE_SEC      = 5
 
 # Directorio del cache encriptado — relativo al script principal
-CACHE_DIR = Path(__file__).resolve().parent / ".cache"
+CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache"
 
 # Timeout por defecto para --retomar y --retomar-todas (en minutos)
 # None = sin limite para el flujo normal de descarga

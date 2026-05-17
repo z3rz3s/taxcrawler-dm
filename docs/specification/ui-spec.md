@@ -6,282 +6,270 @@
 
 Define the exact screens, components, and interactions for the CustomTkinter desktop UI.
 
-This document is the behavioral contract for ui/main.py.
-
 ---
 
 # PRINCIPLE
 
-The UI is a visual wrapper over services/. It has no business logic. It calls services/ functions directly — not through api/.
+The UI calls api/ via HTTP using api_client.py.
+It has no business logic and no direct access to core/ or services/.
+Navigation uses pack/pack_forget — not CTkTabview — to avoid widget overlap.
+
+---
+
+# FILE STRUCTURE
+
+```
+ui/
+├── main.py           <- window, navigation, server indicator
+├── api_client.py     <- api_post, api_get, check_server
+├── widgets.py        <- reusable components
+├── screen_download.py <- Tab Descarga
+└── screen_results.py  <- Tab Resultados
+```
+
+---
+
+# WINDOW
+
+- Title: taxcrawler-dm
+- Size: 960x792 minimum, resizable
+- Theme: dark mode
+- Header: title left, server status dot right (green=active, red=unavailable, updates every 10s)
+- Navigation: 2 buttons below header (Descarga | Resultados)
+  - Active tab: blue button
+  - Inactive tab: gray button
+
+---
+
+# NAVIGATION
+
+## Mechanism
+
+pack/pack_forget — both frames always exist, only one is visible at a time.
+
+## Behavior
+
+- App opens on Descarga tab
+- Clicking Resultados hides Descarga frame, shows Resultados frame, calls refresh_all()
+- Clicking Descarga hides Resultados frame, shows Descarga frame
+- Usar perfil in Resultados: calls \_show_tab("descarga") then fill_from_profile()
+
+---
+
+# TAB DESCARGA
+
+## Form mode
+
+### Operation selector
+
+Radio buttons: Flujo completo | Solo Metadata | Solo CFDI
+
+- Flujo completo: shows Despacho field, hides Timeout and keep_zip
+- Solo Metadata: hides Despacho, Timeout, keep_zip
+- Solo CFDI: hides Despacho, shows Timeout and keep_zip
+
+### RFC field
+
+- Required
+- On FocusOut: calls GET /cache/profile/{rfc} and autofills .cer, .key, output if found
+
+### .cer field
+
+- Required, file must exist on disk
+- Browse button opens file dialog filtered to \*.cer
+
+### .key field
+
+- Required, file must exist on disk
+- Browse button opens file dialog filtered to \*.key
+
+### Password field
+
+- Required, masked (show=\*)
+
+### Date fields (DateWidget)
+
+- Format: YYYY-MM-DD
+- Text entry: accepts only digits, auto-inserts dashes after position 4 and 6
+- Cal button: opens dark Calendar popup centered on window, click on date confirms
+
+### Tipo
+
+Radio buttons: Recibidos | Emitidos
+
+### Despacho (full_flow only)
+
+- Optional text field
+- If empty: API uses DEFAULT_DESPACHO from config
+
+### Timeout in minutes (CFDI only)
+
+- Default: 30
+
+### Keep ZIPs checkbox (CFDI only)
+
+- Default: checked (True)
+- If checked: ZIP preserved with unique name (adds \_2, \_3 suffix if name exists)
+- If unchecked: ZIP deleted after extraction
+
+### Regimen
+
+Dropdown: resico | pfae
+
+### Output folder
+
+- Optional, Browse button opens folder dialog
+- If empty: API uses ./results_RFC
+
+### Server status label
+
+- Green: Servidor activo en http://localhost:8000
+- Orange: Servidor no disponible — inicia: python3 -m uvicorn api.main:app --reload
+
+### Iniciar button
+
+- Validates all required fields before calling API
+- Shows error dialog listing all validation errors
+- If server unavailable: shows error dialog with start instructions
+
+## Progress mode (replaces form)
+
+### Phase label
+
+- Updates per operation step
+
+### Progress bar
+
+- Indeterminate mode during operation
+- Determinate (100%) on completion
+
+### Log panel
+
+- Monospace font, scrollable
+- Shows: RFC, period, operation, request body (password masked), API response logs
+- Updates in real time via queue.Queue from background thread
+
+### Cancelar button
+
+- Always active during operation
+
+### Nueva descarga button
+
+- Always visible, rebuilds form
+
+## Error handling
+
+| Scenario              | Behavior                                                        |
+| --------------------- | --------------------------------------------------------------- |
+| FIEL / password error | Dialog: "Error de FIEL o contrasena" with 3 verification points |
+| Server unavailable    | Dialog with uvicorn start command                               |
+| Unknown error         | Dialog with raw error message                                   |
+
+---
+
+# TAB RESULTADOS
+
+## Subtabs: Archivos | Pendientes | Perfiles
+
+Each subtab has:
+
+- Search bar (SearchBar widget) filtering active tab content
+- Refresh button reloading data from API
+
+---
+
+## Subtab Archivos
+
+Data source: GET /cache/results (encrypted history, portable between PCs)
+
+### FileCard (Excel)
+
+- Icon: 📊
+- File name (bold)
+- Short path (monospace, gray)
+- Meta: fecha | RFC | operacion
+- ⚠ warning if file not found on disk
+- Abrir button (disabled if file not found)
+- 🗑 button: calls DELETE /cache/results/{id}, refreshes list
+
+### FileCard (folder for XMLs)
+
+- Icon: 📁
+- "{count} XMLs descargados"
+- Short path
+- Meta: fecha | RFC
+- Abrir carpeta button (disabled if folder not found)
+- 🗑 button: same as above
+
+### FileCard (TXT Metadata)
+
+- Icon: 📋
+- Same structure as Excel card
+
+### Search
+
+Filters by: RFC, filename, operacion, fecha (combined into search_key per card)
+
+---
+
+## Subtab Pendientes
+
+Data source: GET /cache/pending
+
+### PendingCard
+
+- 🟡 RFC (bold, orange) + elapsed time (right)
+- Period → tipo | solicitud
+- Short ID (monospace)
+- Retomar button: opens password dialog, then progress window with polling
+- Ignorar button: refreshes list (request stays in cache)
+
+### Retomar flow
+
+1. Password dialog (CTkToplevel with grab_set)
+2. Progress window with log panel
+3. POST /download/resume/{request_id} with password in body
+4. On complete: shows xml_files count and output_dir
+5. Refreshes pending list
+
+### Search
+
+Filters by RFC
+
+---
+
+## Subtab Perfiles
+
+Data source: GET /cache/profiles (reads all .profile.enc files)
+
+### ProfileCard
+
+- Header (dark): 🏢 RFC + status badge
+  - Badge green: ✓ FIEL lista (both .cer and .key exist)
+  - Badge orange: ⚠ FIEL incompleta (one or both missing)
+- Body: .cer ✓/✗ | .key ✓/✗ | output path | saved date
+- Usar perfil button
+- Double-click anywhere on card: same as Usar perfil
+
+### Usar perfil behavior
+
+1. \_show_tab("descarga") — switches to Descarga tab
+2. fill_from_profile(profile) — rebuilds form and fills RFC, .cer, .key, output
+
+### Search
+
+Filters by RFC
 
 ---
 
 # GENERAL RULES
 
-- Every user action produces a log entry visible in the progress panel
-- Long-running operations (SAT polling) run in a background thread
-- The UI never blocks while waiting for SAT
-- Passwords are never displayed after entry
-- The cancel button is always active during SAT operations
-- Error messages are shown inline — no modal dialogs for errors
-
----
-
-# SCREEN FLOW
-
-```
-Screen 1: Configuration
-    -> user fills form and clicks "Start"
-    -> validates inputs
-    -> transitions to Screen 2
-
-Screen 2: Progress
-    -> shows live log panel
-    -> shows phase indicator
-    -> cancel button active
-    -> on completion: shows "View Results" button
-    -> on completion: transitions to Screen 3
-
-Screen 3: Results
-    -> shows downloaded files list
-    -> shows Excel path with "Open" button
-    -> shows pending requests if any
-    -> "New Download" button returns to Screen 1
-```
-
----
-
-# SCREEN 1 — CONFIGURATION
-
-## Purpose
-
-Collect all parameters needed for a download operation.
-
-## Components
-
-### RFC Field
-
-- Label: "RFC"
-- Input: text entry, uppercase enforced
-- Validation: required, non-empty
-- Auto-fill: if profile exists for entered RFC, fill remaining fields automatically
-
-### FIEL .cer Field
-
-- Label: ".cer (e.firma)"
-- Input: text entry + "Browse" button
-- Browse: opens file dialog filtered to .cer files
-- Validation: required, file must exist on disk
-- Auto-fill: from RFC profile if available
-
-### FIEL .key Field
-
-- Label: ".key (e.firma)"
-- Input: text entry + "Browse" button
-- Browse: opens file dialog filtered to .key files
-- Validation: required, file must exist on disk
-- Auto-fill: from RFC profile if available
-
-### Password Field
-
-- Label: "Contrasena FIEL"
-- Input: password entry (masked)
-- Validation: required, non-empty
-- Never stored, never logged
-
-### Start Date Field
-
-- Label: "Fecha inicio"
-- Input: text entry, format YYYY-MM-DD
-- Validation: required, valid date, within last 6 years
-
-### End Date Field
-
-- Label: "Fecha fin"
-- Input: text entry, format YYYY-MM-DD
-- Validation: required, valid date, >= start date
-
-### Operation Selector
-
-- Label: "Operacion"
-- Options:
-    - Flujo completo (Metadata + Excel) <- default
-    - Solo Metadata recibidos
-    - Solo Metadata emitidos
-    - Solo CFDI recibidos
-    - Solo CFDI emitidos
-
-### Despacho Field
-
-- Label: "Nombre del despacho"
-- Input: text entry
-- Default: value from DESPACHO_NOMBRE env or DEFAULT_DESPACHO constant
-- Only shown when operation includes Excel generation
-
-### Anti-block Semaphore
-
-- Shown only when operation is CFDI
-- Green: no prior attempts for this RFC + period
-- Yellow: 1 prior attempt
-- Red: 2+ attempts — bypass offset active
-- Reads from cache_service.get_history()
-
-### Output Folder Field
-
-- Label: "Carpeta de salida"
-- Input: text entry + "Browse" button
-- Default: ./results_RFC based on entered RFC
-- Browse: opens folder dialog
-
-### Polling Interval Field
-
-- Label: "Intervalo (seg)"
-- Input: numeric entry
-- Default: 60
-- Minimum: 10
-
-### Timeout Field
-
-- Label: "Timeout (min)"
-- Input: numeric entry
-- Default: 30
-- Optional — leave blank for no limit
-
-### Start Button
-
-- Label: "Iniciar descarga"
-- Action: validate all fields, then call appropriate service function
-- Disabled while operation is in progress
-
----
-
-# SCREEN 2 — PROGRESS
-
-## Purpose
-
-Show real-time progress during SAT operations.
-
-## Components
-
-### Phase Indicator
-
-Shows current phase as text and progress bar:
-
-- Phase 1/3: Descargando Metadata ingresos...
-- Phase 2/3: Descargando Metadata gastos...
-- Phase 3/3: Generando Excel...
-
-### Log Panel
-
-- Scrollable text area
-- Receives log entries in real time from logging handler
-- New entries auto-scroll to bottom
-- Monospace font
-
-### Cancel Button
-
-- Label: "Cancelar"
-- Always active during operation
-- On click: sends stop signal to background thread
-- Shows confirmation message: "Operacion cancelada. Las solicitudes pendientes se conservaron."
-
-### View Results Button
-
-- Hidden during operation
-- Shown on successful completion
-- Label: "Ver resultados"
-- Action: transitions to Screen 3
-
----
-
-# SCREEN 3 — RESULTS
-
-## Purpose
-
-Show what was downloaded and generated.
-
-## Components
-
-### Downloaded Files List
-
-- Scrollable list
-- Shows each file with name, size, and type icon
-- Click on file opens it with system default app
-
-### Excel Section
-
-- Shown only if Excel was generated
-- Label: "Papel de Trabajo generado"
-- File name shown
-- "Abrir Excel" button: opens file with system default app
-
-### Pending Requests Panel
-
-- Shown only if there are pending CFDI requests
-- List of pending requests with RFC, period, elapsed time
-- "Retomar" button per request: calls download_service and transitions to Screen 2
-
-### New Download Button
-
-- Label: "Nueva descarga"
-- Action: clears form and transitions to Screen 1
-- RFC field pre-filled with last used RFC
-
----
-
-# INTERACTIONS
-
-## Profile Auto-fill
-
-When user finishes typing RFC and presses Tab:
-
-1. Call cache_service.get_profile(rfc)
-2. If profile exists: fill .cer, .key, output_dir, intervalo silently
-3. Show status message: "Perfil cargado para RFC {rfc}"
-4. Update semaphore based on cache history
-
-## Semaphore Update
-
-Every time RFC or date fields change:
-
-1. Call cache_service.get_history(rfc)
-2. Find matching period
-3. Update semaphore color accordingly
-
-## Background Thread
-
-Long-running operations run in a separate thread:
-
-1. Main thread: renders UI, responds to user
-2. Background thread: calls service function
-3. Background thread: posts log entries to log panel via queue
-4. Background thread: posts completion event when done
-5. Main thread: handles completion event, shows Screen 3
-
----
-
-# ERROR HANDLING
-
-|Scenario|UI Behavior|
-|---|---|
-|Required field empty|Red border on field, message below field|
-|File not found|Red border, message: "Archivo no encontrado"|
-|Invalid date|Red border, message: "Formato invalido. Use YYYY-MM-DD"|
-|SAT authentication failure|Log panel shows error, operation stops|
-|SAT request rejected|Log panel shows SAT code and message, operation stops|
-|Timeout reached|Log panel shows message, pending badge shown, resume button appears|
-|Ctrl+C or window close|Pending requests preserved, confirmation dialog shown|
-
----
-
-# CUSTOMTKINTER IMPLEMENTATION NOTES
-
-- Theme: dark mode by default, system default as fallback
-- Font: system default, monospace for log panel
-- Window size: 900 x 700 minimum, resizable
-- All service calls wrapped in try/except with log entry on error
-- Threading: use threading.Thread for background operations
-- Queue: use queue.Queue for thread-safe log panel updates
+- Every long-running SAT operation runs in a background thread
+- Log panel updated via queue.Queue (thread-safe)
+- Password never shown, never logged
+- Request body logged with password replaced by \*\*\*
+- Server availability checked every 10 seconds (header dot)
+- On server unavailable before start: error dialog shown, operation blocked
 
 ---
 
@@ -289,15 +277,13 @@ Long-running operations run in a separate thread:
 
 When React + Tauri replaces CustomTkinter:
 
-- ui/main.py is replaced by a React app
-- React consumes api/ endpoints instead of calling services/ directly
-- CustomTkinter screens map 1:1 to React components
-- All behavior defined here remains identical
+- ui/ is replaced by React app consuming api/ endpoints
+- Same 2-tab structure: Descarga | Resultados
+- All behavior in this spec remains identical
+- Auth header added to React HTTP client instead of api_client.py
 
 ---
 
-# RELATION TO SPECIFICATION
+# TODO MARKERS IN CODE
 
-- Services called: specification/system-modules.md (services/ segment)
-- API not used by ui/ in MVP: specification/api-contract.md
-- User stories covered: user-stories.md US-GUI-001 to US-GUI-005 (planned)
+- ui/api_client.py: api_post() and api_get() — AUTH_HEADER for Phase 6

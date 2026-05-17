@@ -156,6 +156,7 @@ def download_cfdi(
     output_dir: Path | None = None,
     intervalo: int = 60,
     timeout_min: int | None = None,
+    keep_zip: bool = True,
 ) -> list[Path]:
     """
     Descarga CFDIs XML para un RFC y rango de fechas.
@@ -220,7 +221,7 @@ def download_cfdi(
         zip_path = download_package(fiel, pkg_id, rfc.upper(), output_day, i, len(packages))
         if zip_path:
             pkg_name = base_name if len(packages) == 1 else f"{base_name}_{i}"
-            xmls, _  = extract_cfdi(zip_path, pkg_name)
+            xmls, _  = extract_cfdi(zip_path, pkg_name, keep_zip=keep_zip)
             all_xmls.extend(xmls)
 
     remove_pending(rfc.upper(), request_id, "completada")
@@ -285,3 +286,112 @@ def full_flow(
     )
 
     return excel_path
+
+def resume_cfdi(
+    request_id: str,
+    timeout_min: int = 30,
+) -> dict:
+    """
+    Retoma el polling de una solicitud CFDI pendiente por ID.
+    Busca el request_id en todos los archivos .pending.enc disponibles.
+    Retorna dict con status, xml_files y files.
+
+    status posibles:
+      completed      -> descarga exitosa
+      pending        -> timeout alcanzado, sigue en pending
+      not_found      -> request_id no existe en ningun pending
+      terminal_error -> rechazada o vencida por el SAT
+    """
+    from core.config import CACHE_DIR
+    from core.cache_manager import elapsed_label
+
+    # Buscar el ID en todos los pendientes
+    info = None
+    rfc  = None
+    for archivo in CACHE_DIR.glob("*.pending.enc") if CACHE_DIR.exists() else []:
+        rfc_candidate = archivo.stem.replace(".pending", "")
+        pending       = read_pending(rfc_candidate)
+        if request_id in pending:
+            info = pending[request_id]
+            rfc  = rfc_candidate
+            break
+
+    if not info or rfc is None:
+        return {"status": "not_found", "request_id": request_id, "xml_files": 0, "files": []}
+
+    profile = read_profile(rfc)
+    if not profile:
+        return {
+            "status":  "error",
+            "message": f"Sin perfil guardado para RFC {rfc}. Ejecuta una descarga primero.",
+            "xml_files": 0, "files": [],
+        }
+
+    cer_path = Path(profile.get("cer", ""))
+    key_path = Path(profile.get("key", ""))
+
+    if not cer_path.exists() or not key_path.exists():
+        return {
+            "status":  "error",
+            "message": f"Archivos FIEL no encontrados en disco para RFC {rfc}.",
+            "xml_files": 0, "files": [],
+        }
+
+    # La contrasena no esta en el cache — leerla del entorno si existe
+    from core.config import resolve_password
+    import os
+    env_key  = f"SAT_PASSWORD_{rfc.upper()}"
+    password = os.environ.get(env_key, "").strip()
+
+    if not password:
+        return {
+            "status":  "needs_password",
+            "message": f"Se requiere contrasena para RFC {rfc}. Proveerla en el request.",
+            "rfc":     rfc,
+            "xml_files": 0, "files": [],
+        }
+
+    fiel = load_fiel(cer_path, key_path, password)
+
+    p_retomar = {
+        "rfc":       info["rfc"],
+        "tipo":      info["tipo"],
+        "solicitud": info["solicitud"],
+        "inicio":    __import__("datetime").date.fromisoformat(info["inicio"]),
+        "fin":       __import__("datetime").date.fromisoformat(info["fin"]),
+        "intervalo": info.get("intervalo", 60),
+        "output":    Path(info["output"]),
+    }
+
+    result = verify_with_timeout(fiel, request_id, p_retomar, timeout_min)
+
+    if result in ("rechazada", "vencida"):
+        remove_pending(rfc, request_id, result)
+        return {"status": "terminal_error", "reason": result, "xml_files": 0, "files": []}
+
+    if result is None:
+        return {"status": "pending", "request_id": request_id, "xml_files": 0, "files": []}
+
+    # Completada — descargar y extraer
+    from core.file_handler import resolve_retomar_output_dir
+    output_dir = resolve_retomar_output_dir(p_retomar)
+    base_name  = f"{p_retomar['inicio'].strftime('%Y-%m')}-{rfc}"
+    all_xmls: list[Path] = []
+
+    for i, pkg_id in enumerate(result, 1):
+        zip_path = download_package(fiel, pkg_id, rfc, output_dir, i, len(result))
+        if zip_path:
+            pkg_name = base_name if len(result) == 1 else f"{base_name}_{i}"
+            xmls, _  = extract_cfdi(zip_path, pkg_name)
+            all_xmls.extend(xmls)
+
+    remove_pending(rfc, request_id, "completada")
+    write_profile(rfc, cer_path, key_path, p_retomar["output"], p_retomar["intervalo"])
+
+    return {
+        "status":    "completed",
+        "rfc":       rfc,
+        "xml_files": len(all_xmls),
+        "files":     [str(f) for f in all_xmls],
+        "output_dir": str(output_dir),
+    }
