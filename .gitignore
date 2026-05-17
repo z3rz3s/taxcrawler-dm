@@ -1,5 +1,11 @@
-# Created by https://www.toptal.com/developers/gitignore/api/windows,linux,macos,python,pycharm+all
-# Edit at https://www.toptal.com/developers/gitignore?templates=windows,linux,macos,python,pycharm+all
+### Project Temp files ###
+certs/*
+*.cer
+*.key
+libs/
+results_*/
+.env
+.cache/
 
 ### Linux ###
 *~
@@ -342,5 +348,9 @@ libs/
 results_*/
 .env
 .cache/
+certs/*
+__pycache__/*
 
-# End of https://www.toptal.com/developers/gitignore/api/windows,linux,macos,python,pycharm+all
+### Obsidian ###
+# config dir
+docs/.obsidian/

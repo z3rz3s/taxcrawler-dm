@@ -1,0 +1,66 @@
+.
+├── AGENTS.md
+├── CLAUDE.md
+├── FLOWS.md
+├── LICENSE
+├── README.md
+├── ROADMAP.md
+├── api
+│   ├── __init__.py
+│   ├── main.py
+│   └── routes
+│       ├── __init__.py
+│       ├── cache.py
+│       ├── download.py
+│       └── excel.py
+├── cli
+│   ├── __init__.py
+│   └── main.py
+├── core
+│   ├── __init__.py
+│   ├── cache_manager.py
+│   ├── config.py
+│   ├── excel_generator.py
+│   ├── file_handler.py
+│   ├── metadata_parser.py
+│   └── sat_client.py
+├── docs
+│   ├── chat-bootstrap.md
+│   ├── foundation
+│   │   ├── action-plan.md
+│   │   ├── architecture.md
+│   │   └── product-definition.md
+│   ├── process
+│   │   ├── llm-continuity.md
+│   │   ├── llm-workflow.md
+│   │   └── spec-rules.md
+│   ├── readme.md
+│   └── specification
+│       ├── api-contract.md
+│       ├── cli-contract.md
+│       ├── system-modules.md
+│       ├── test-cases.md
+│       ├── ui-spec.md
+│       └── user-stories.md
+├── install.bat
+├── install.sh
+├── project_structure.txt
+├── pyrightconfig.json
+├── results
+├── services
+│   ├── __init__.py
+│   ├── cache_service.py
+│   ├── download_service.py
+│   └── excel_service.py
+├── start.bat
+├── start.sh
+├── tabla_isr.csv
+└── ui
+    ├── __init__.py
+    ├── api_client.py
+    ├── main.py
+    ├── screen_download.py
+    ├── screen_results.py
+    └── widgets.py
+
+12 directories, 52 files
