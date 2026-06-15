@@ -682,6 +682,559 @@ def _write_calculos(ws, isr_table: list[tuple]) -> None:
 
 
 # ===========================================================================
+# Helpers — conversion de XML a registros compatibles con metadata
+# ===========================================================================
+
+
+def _xml_to_metadata_record(xml_rec: dict) -> dict:
+    """
+    Convierte un registro de XML parseado a un dict compatible con
+    el formato de metadata del SAT (mismos campos que usa group_records_by_month).
+    El campo 'monto' usa el total del CFDI (subtotal + IVA), igual que
+    la columna Monto del metadata SAT.
+    """
+    fecha_str = xml_rec["fecha"].strftime("%Y-%m-%d") if xml_rec["fecha"] else ""
+    return {
+        "uuid":            xml_rec["uuid"],
+        "rfc_emisor":      xml_rec["rfc_emisor"],
+        "nombre_emisor":   xml_rec["nombre_emisor"],
+        "rfc_receptor":    xml_rec["rfc_receptor"],
+        "nombre_receptor": xml_rec.get("nombre_receptor", ""),
+        "fecha_emision":   fecha_str,
+        "monto":           xml_rec["total"],
+        "tipo":            xml_rec["tipo"],
+        "estatus":         "Vigente",
+    }
+
+
+def _group_xml_as_metadata(
+    xml_records: list[dict],
+    rfc: str,
+    record_type: str,
+) -> dict[str, list[dict]]:
+    """
+    Agrupa registros XML parseados por mes (YYYY-MM), filtrando por tipo
+    y RFC, y los convierte a formato compatible con metadata.
+
+    record_type:
+      'ingresos' → Tipo I donde el RFC es emisor
+      'gastos'   → Tipo I donde el RFC es receptor
+      'pagos'    → Tipo P donde el RFC es receptor
+    """
+    grouped: dict[str, list[dict]] = {}
+    for rec in xml_records:
+        if rec["fecha"] is None:
+            continue
+        month_key = rec["fecha"].strftime("%Y-%m")
+
+        # Filtrar por tipo
+        if record_type in ("ingresos", "gastos") and rec["tipo"] != "I":
+            continue
+        if record_type == "pagos" and rec["tipo"] != "P":
+            continue
+
+        # Filtrar por RFC
+        if record_type == "ingresos":
+            if rec["rfc_emisor"].upper() != rfc.upper():
+                continue
+        elif record_type in ("gastos", "pagos"):
+            if rec["rfc_receptor"].upper() != rfc.upper():
+                continue
+
+        meta_rec = _xml_to_metadata_record(rec)
+        grouped.setdefault(month_key, []).append(meta_rec)
+
+    return grouped
+
+
+def generate_excel_from_xml(
+    rfc: str,
+    start_date: date,
+    end_date: date,
+    xml_income_dir: Path,
+    xml_expense_dir: Path,
+    output_dir: Path,
+    isr_table: list[tuple],
+    despacho: str = "Despacho Contable",
+    regimen: str = "resico",
+) -> Path:
+    """
+    Genera el Excel de Papel de Trabajo directamente desde directorios
+    de XMLs CFDI (sin necesidad de archivos TXT de metadata).
+
+    Esta funcion:
+      1. Parsea los XMLs de ingresos y gastos
+      2. Convierte los registros XML a formato compatible con metadata
+      3. Usa los XMLs para los valores fiscales (IVA, ISR)
+      4. Genera el Excel con las 6 hojas estandar
+
+    Parametros:
+      rfc             : RFC del contribuyente
+      start_date      : inicio del periodo
+      end_date        : fin del periodo
+      xml_income_dir  : carpeta con XMLs CFDI de ingresos (cliente es emisor)
+      xml_expense_dir : carpeta con XMLs CFDI de gastos (cliente es receptor)
+      output_dir      : carpeta donde se guarda el Excel
+      isr_table       : tabla ISR como lista de tuplas
+      despacho        : nombre del despacho contable
+      regimen         : 'resico' (implementado) | 'pfae' (TODO)
+
+    Retorna la ruta al archivo Excel generado.
+    """
+    log.info(f"Generando Excel desde XMLs | RFC: {rfc} | Periodo: {start_date} -> {end_date}")
+
+    # Parsear XMLs
+    xml_income_all: list[dict] = []
+    xml_expense_all: list[dict] = []
+
+    if xml_income_dir and xml_income_dir.exists():
+        log.info(f"  Parseando XMLs de ingresos: {xml_income_dir}")
+        xml_income_all = parsear_directorio(xml_income_dir)
+        log.info(f"    {len(xml_income_all)} XMLs de ingresos parseados")
+
+    if xml_expense_dir and xml_expense_dir.exists():
+        log.info(f"  Parseando XMLs de gastos: {xml_expense_dir}")
+        xml_expense_all = parsear_directorio(xml_expense_dir)
+        log.info(f"    {len(xml_expense_all)} XMLs de gastos parseados")
+
+    if not xml_income_all and not xml_expense_all:
+        log.warning("  ! Sin XMLs — se generara un Excel vacio.")
+
+    # Convertir XMLs a registros compatibles con metadata
+    grouped_ingresos = _group_xml_as_metadata(xml_income_all, rfc, "ingresos")
+    grouped_gastos   = _group_xml_as_metadata(xml_expense_all, rfc, "gastos")
+    grouped_pagos    = _group_xml_as_metadata(xml_expense_all, rfc, "pagos")
+
+    # Agrupar XMLs por mes para calculos fiscales
+    xml_income_by_month = agrupar_por_mes(xml_income_all)
+    xml_expense_by_month = agrupar_por_mes(xml_expense_all)
+
+    # Nombre del archivo
+    if start_date.replace(day=1) == end_date.replace(day=1):
+        filename = f"{rfc}_{start_date.strftime('%Y-%m')}.xlsx"
+    else:
+        filename = f"{rfc}_{start_date.strftime('%Y-%m')}__{end_date.strftime('%Y-%m')}.xlsx"
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    excel_path = output_dir / filename
+
+    # Calculos por mes
+    periods    = generate_monthly_periods(start_date, end_date)
+    month_calcs: list[dict] = []
+
+    for month_start, _ in periods:
+        month_key = month_start.strftime("%Y-%m")
+        month_num = month_start.strftime("%m")
+        month_lbl = f"{MESES_ES[month_num]} {month_start.year}"
+
+        income_recs   = grouped_ingresos.get(month_key, [])
+        expense_recs  = grouped_gastos.get(month_key, [])
+        xml_inc_month = xml_income_by_month.get(month_key, [])
+        xml_exp_month = xml_expense_by_month.get(month_key, [])
+        calcs         = _build_month_calcs(
+            income_recs, expense_recs, isr_table,
+            xml_income=xml_inc_month if xml_inc_month else None,
+            xml_expense=xml_exp_month if xml_exp_month else None,
+        )
+        calcs["label"]     = month_lbl
+        calcs["month_key"] = month_key
+        month_calcs.append(calcs)
+
+    # Nombre del cliente
+    client_name = rfc
+    for recs in grouped_ingresos.values():
+        if recs:
+            client_name = recs[0]["nombre_emisor"]
+            break
+    if client_name == rfc:
+        for recs in grouped_gastos.values():
+            if recs:
+                client_name = recs[0]["nombre_receptor"]
+                break
+
+    year = start_date.year
+
+    # Crear workbook con 6 hojas
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    log.info("  Escribiendo hojas...")
+
+    ws1 = wb.create_sheet("ingresos")
+    _write_ingresos(ws1, grouped_ingresos)
+
+    ws2 = wb.create_sheet("gastos")
+    _write_gastos(ws2, grouped_gastos, grouped_pagos)
+
+    ws3 = wb.create_sheet("Impuestos")
+    _write_impuestos(ws3, month_calcs)
+
+    ws4 = wb.create_sheet("Papel de Trabajo")
+    _write_papel(ws4, rfc, client_name, despacho, month_calcs)
+
+    ws5 = wb.create_sheet(f"INGRESOS {year}")
+    _write_ingresos_historico(ws5, rfc, year, month_calcs)
+
+    ws6 = wb.create_sheet("Calculos")
+    _write_calculos(ws6, isr_table)
+
+    wb.save(excel_path)
+    log.info(f"  Excel guardado: {excel_path}")
+    log.info(f"  Hojas: {wb.sheetnames}")
+
+    # Generar también el Excel para el contribuyente
+    try:
+        cliente_path = generate_excel_cliente(
+            rfc=rfc,
+            client_name=client_name,
+            start_date=start_date,
+            end_date=end_date,
+            xml_income_dir=xml_income_dir,
+            xml_expense_dir=xml_expense_dir,
+            output_dir=output_dir,
+            isr_table=isr_table,
+            despacho=despacho,
+        )
+        log.info(f"  Excel cliente guardado: {cliente_path}")
+    except Exception as e:
+        log.warning(f"  ⚠ No se pudo generar Excel cliente: {e}")
+
+    return excel_path
+
+
+# ===========================================================================
+# Excel para el contribuyente — lenguaje ciudadano, sin tecnicismos
+# ===========================================================================
+
+# Colores
+CLI_GREEN  = PatternFill("solid", start_color="00B050")
+CLI_ORANGE = PatternFill("solid", start_color="FF6600")
+CLI_RED    = PatternFill("solid", start_color="FF0000")
+CLI_WHITE  = PatternFill("solid", start_color="FFFFFF")
+CLI_LIGHT  = PatternFill("solid", start_color="F2F2F2")
+FONT_CLI_TITLE   = Font(name="Arial", bold=True, size=14, color="FFFFFF")
+FONT_CLI_HEADER  = Font(name="Arial", bold=True, size=11, color="FFFFFF")
+FONT_CLI_NORMAL  = Font(name="Arial", size=11)
+FONT_CLI_BOLD    = Font(name="Arial", bold=True, size=11)
+FONT_CLI_BIG     = Font(name="Arial", bold=True, size=16)
+FONT_CLI_SIGN    = Font(name="Arial", italic=True, size=10, color="555555")
+
+
+def _color_segun_saldo(iva_saldo: float, isr: float) -> PatternFill:
+    """Verde si no debe, naranja si debe poco, rojo si debe mucho."""
+    total_a_pagar = max(0, iva_saldo) + max(0, isr)
+    if total_a_pagar <= 0:
+        return CLI_GREEN
+    elif total_a_pagar < 5000:
+        return CLI_ORANGE
+    else:
+        return CLI_RED
+
+
+def _fmt_pesos(val: float) -> str:
+    """Formato pesos mexicanos: $1,234.56"""
+    return f"${val:,.2f}"
+
+
+def _nombre_mes(fecha: date) -> str:
+    """Enero, Febrero, etc."""
+    meses = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
+             "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
+    return meses[fecha.month - 1]
+
+
+def generate_excel_cliente(
+    rfc: str,
+    client_name: str,
+    start_date: date,
+    end_date: date,
+    xml_income_dir: Path,
+    xml_expense_dir: Path,
+    output_dir: Path,
+    isr_table: list[tuple],
+    despacho: str = "Despacho Contable",
+) -> Path:
+    """
+    Genera un Excel amigable para el contribuyente con 3 hojas:
+      1. Mi Resumen del Mes — ingresos, gastos, impuestos en lenguaje llano
+      2. ¿Qué necesito hacer? — pasos accionables
+      3. Mis Facturas del Mes — tabla simple sin UUIDs ni códigos técnicos
+
+    Colores: verde (sin impuesto), naranja (pago moderado), rojo (urgente).
+    Incluye linea de firma para autorización.
+    """
+    from xml_parser import parsear_directorio, agrupar_por_mes
+
+    # ── Parsear XMLs ──
+    xml_income_all = parsear_directorio(xml_income_dir) if xml_income_dir.exists() else []
+    xml_expense_all = parsear_directorio(xml_expense_dir) if xml_expense_dir.exists() else []
+
+    # ── Calcular totales ──
+    total_ingresos    = sum(r["total"] for r in xml_income_all if r["tipo"] == "I")
+    total_gastos      = sum(r["total"] for r in xml_expense_all if r["tipo"] == "I")
+    iva_trasladado    = sum(r["iva_16"] for r in xml_income_all if r["tipo"] != "P")
+    iva_acreditable   = sum(r["iva_16"] for r in xml_expense_all if r["tipo"] != "P")
+    iva_saldo         = iva_trasladado - iva_acreditable
+    isr_retenido      = sum(r["isr_ret"] for r in xml_income_all if r["tipo"] != "P")
+    isr_data          = _lookup_isr(total_ingresos, isr_table)
+    isr_por_pagar     = max(0.0, isr_data["isr_calculado"] - isr_retenido)
+
+    # ── Listas de facturas (lenguaje llano) ──
+    facturas_ingresos = [
+        {"fecha": r["fecha"], "quien": r.get("nombre_receptor", "Cliente"),
+         "monto": r["total"]}
+        for r in xml_income_all if r["tipo"] == "I"
+    ]
+    facturas_gastos = [
+        {"fecha": r["fecha"], "quien": r["nombre_emisor"], "monto": r["total"]}
+        for r in xml_expense_all if r["tipo"] == "I"
+    ]
+
+    # ── Colores ──
+    color = _color_segun_saldo(iva_saldo, isr_por_pagar)
+    mes_nombre = _nombre_mes(start_date)
+    periodo = f"{mes_nombre} {start_date.year}"
+
+    # ── Crear archivo ──
+    filename = f"{rfc}_{start_date.strftime('%Y-%m')}_cliente.xlsx"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / filename
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    # ═══════════════════════════════════════════════════════════════
+    # HOJA 1 — Mi Resumen del Mes
+    # ═══════════════════════════════════════════════════════════════
+    ws1 = wb.create_sheet("Mi Resumen del Mes")
+    ws1.sheet_properties.tabColor = "00B050"
+    ws1.column_dimensions["A"].width = 5
+    ws1.column_dimensions["B"].width = 55
+    ws1.column_dimensions["C"].width = 22
+
+    r = 1
+    # Título con color de fondo
+    for col in range(1, 4):
+        c = ws1.cell(row=r, column=col)
+        c.fill = color
+    titulo = ws1.cell(row=r, column=2, value=f"Mi Resumen — {periodo}")
+    titulo.font = FONT_CLI_TITLE
+    titulo.alignment = Alignment(horizontal="left", vertical="center")
+    r += 1
+    for col in range(1, 4):
+        ws1.cell(row=r, column=col).fill = color
+    sub = ws1.cell(row=r, column=2, value=f"{client_name}  |  RFC: {rfc}")
+    sub.font = Font(name="Arial", size=10, color="FFFFFF")
+    sub.alignment = Alignment(horizontal="left")
+    r += 2
+
+    # Bloque: Ingresos
+    ws1.cell(row=r, column=2, value="💰 Lo que facturaste este mes:").font = FONT_CLI_BOLD
+    r += 1
+    val = ws1.cell(row=r, column=2, value=_fmt_pesos(total_ingresos))
+    val.font = FONT_CLI_BIG
+    val.alignment = Alignment(horizontal="left")
+    r += 1
+    ws1.cell(row=r, column=2, value=f"   ({len(facturas_ingresos)} factura(s) emitida(s))").font = FONT_CLI_SIGN
+    r += 2
+
+    # Bloque: Gastos
+    ws1.cell(row=r, column=2, value="📄 Lo que gastaste (con factura):").font = FONT_CLI_BOLD
+    r += 1
+    val = ws1.cell(row=r, column=2, value=_fmt_pesos(total_gastos))
+    val.font = FONT_CLI_BIG
+    r += 1
+    ws1.cell(row=r, column=2, value=f"   ({len(facturas_gastos)} factura(s) de gastos)").font = FONT_CLI_SIGN
+    r += 2
+
+    # Bloque: ISR
+    ws1.cell(row=r, column=2, value="🏛️ Lo que debes pagar de ISR:").font = FONT_CLI_BOLD
+    r += 1
+    val = ws1.cell(row=r, column=2, value=_fmt_pesos(isr_por_pagar))
+    val.font = FONT_CLI_BIG
+    if isr_por_pagar > 0:
+        val.font = Font(name="Arial", bold=True, size=16, color="FF0000" if isr_por_pagar >= 5000 else "FF6600")
+    else:
+        val.font = Font(name="Arial", bold=True, size=16, color="00B050")
+        ws1.cell(row=r + 1, column=2, value="   ¡No debes ISR este mes!").font = FONT_CLI_SIGN
+    r += 2
+
+    # Bloque: IVA
+    ws1.cell(row=r, column=2, value="🧾 Impuesto al valor agregado (IVA):").font = FONT_CLI_BOLD
+    r += 1
+    if iva_saldo > 0:
+        val = ws1.cell(row=r, column=2, value=f"Debes pagar {_fmt_pesos(iva_saldo)}")
+        val.font = Font(name="Arial", bold=True, size=16, color="FF0000" if iva_saldo >= 5000 else "FF6600")
+    else:
+        val = ws1.cell(row=r, column=2, value=f"Tienes {_fmt_pesos(abs(iva_saldo))} a favor")
+        val.font = Font(name="Arial", bold=True, size=16, color="00B050")
+    r += 1
+    ws1.cell(row=r, column=2,
+             value=f"   IVA cobrado: {_fmt_pesos(iva_trasladado)}  |  IVA de tus gastos: {_fmt_pesos(iva_acreditable)}").font = FONT_CLI_SIGN
+    r += 3
+
+    # Línea de firma
+    ws1.cell(row=r, column=2, value="Autorizo el pago:").font = FONT_CLI_BOLD
+    r += 1
+    ws1.cell(row=r, column=2, value="________________________________________").font = FONT_CLI_NORMAL
+    r += 1
+    ws1.cell(row=r, column=2, value="Firma").font = FONT_CLI_SIGN
+    c_fecha = ws1.cell(row=r, column=3, value="Fecha: _______________")
+    c_fecha.font = FONT_CLI_SIGN
+
+    # ═══════════════════════════════════════════════════════════════
+    # HOJA 2 — ¿Qué necesito hacer?
+    # ═══════════════════════════════════════════════════════════════
+    ws2 = wb.create_sheet("Acciones del Mes")
+    ws2.sheet_properties.tabColor = "FF6600"
+    ws2.column_dimensions["A"].width = 5
+    ws2.column_dimensions["B"].width = 80
+
+    r = 1
+    tit = ws2.cell(row=r, column=2, value=f"¿Qué necesito hacer? — {periodo}")
+    tit.font = Font(name="Arial", bold=True, size=14, color="2F5496")
+    r += 2
+
+    pasos = [
+        ("1", f"Revisa que tus ingresos de {periodo} estén completos.\n   Si falta alguna factura, avísame para agregarla."),
+        ("2", "Revisa que los gastos con factura estén correctos.\n   Son las facturas que pidieron a tu RFC."),
+        ("3", f"Firma la hoja 'Mi Resumen del Mes' para autorizar.\n   Esto confirma que revisaste los montos."),
+    ]
+
+    # Solo agregar pasos de pago si hay impuestos por pagar
+    # Calcular siguiente mes para fecha de pago
+    next_month = start_date.month % 12 + 1
+    next_year = start_date.year + 1 if start_date.month == 12 else start_date.year
+    next_mes_nombre = _nombre_mes(date(next_year, next_month, 1))
+    if isr_por_pagar > 0 and iva_saldo > 0:
+        total_impuestos = isr_por_pagar + iva_saldo
+        pasos.append(("4", f"Deposita {_fmt_pesos(total_impuestos)} antes del día {dia_pago} de {next_mes_nombre}.\n   ISR: {_fmt_pesos(isr_por_pagar)} + IVA: {_fmt_pesos(iva_saldo)}"))
+    elif isr_por_pagar > 0:
+        pasos.append(("4", f"Deposita {_fmt_pesos(isr_por_pagar)} de ISR antes del día {dia_pago} de {next_mes_nombre}."))
+    elif iva_saldo > 0:
+        pasos.append(("4", f"Deposita {_fmt_pesos(iva_saldo)} de IVA antes del día {dia_pago} de {next_mes_nombre}."))
+    else:
+        pasos.append(("4", "¡No tienes impuestos por pagar este mes! 🎉\n   Tu IVA a favor se acumula para el siguiente mes."))
+
+    pasos.append(("5", "Guarda este Excel y tus facturas en una carpeta.\n   Te servirán para tu contabilidad y cualquier aclaración."))
+
+    for num, texto in pasos:
+        c_num = ws2.cell(row=r, column=1, value=num)
+        c_num.font = Font(name="Arial", bold=True, size=14, color="2F5496")
+        c_num.alignment = Alignment(horizontal="center", vertical="top")
+        c_txt = ws2.cell(row=r, column=2, value=texto)
+        c_txt.font = FONT_CLI_NORMAL
+        c_txt.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+        ws2.row_dimensions[r].height = 45 if "\n" in texto else 25
+        r += 2
+
+    r += 1
+    ws2.cell(row=r, column=2, value="¿Dudas? Contáctame.").font = Font(name="Arial", italic=True, size=10, color="7F7F7F")
+
+    # ═══════════════════════════════════════════════════════════════
+    # HOJA 3 — Mis Facturas del Mes
+    # ═══════════════════════════════════════════════════════════════
+    ws3 = wb.create_sheet("Mis Facturas del Mes")
+    ws3.sheet_properties.tabColor = "2F5496"
+    ws3.column_dimensions["A"].width = 14
+    ws3.column_dimensions["B"].width = 50
+    ws3.column_dimensions["C"].width = 20
+
+    r = 1
+    tit3 = ws3.cell(row=r, column=1, value=f"Mis Facturas — {periodo}")
+    tit3.font = Font(name="Arial", bold=True, size=14, color="2F5496")
+    r += 2
+
+    # Encabezados
+    for i, h in enumerate(["Fecha", "¿Quién me pagó? / ¿A quién pagué?", "Monto"], 1):
+        c = ws3.cell(row=r, column=i, value=h)
+        c.font = FONT_CLI_HEADER
+        c.fill = PatternFill("solid", start_color="2F5496")
+        c.alignment = ALIGN_CENTER
+        c.border = BORDER_THIN
+    r += 1
+
+    # Sección ingresos
+    c_sec = ws3.cell(row=r, column=1, value="📤 INGRESOS")
+    c_sec.font = FONT_CLI_BOLD
+    ws3.merge_cells(start_row=r, start_column=1, end_row=r, end_column=3)
+    r += 1
+
+    total_inc = 0.0
+    for f in facturas_ingresos:
+        fecha_str = f["fecha"].strftime("%d/%m/%Y") if f["fecha"] else ""
+        ws3.cell(row=r, column=1, value=fecha_str).font = FONT_CLI_NORMAL
+        ws3.cell(row=r, column=2, value=f["quien"]).font = FONT_CLI_NORMAL
+        c = ws3.cell(row=r, column=3, value=f["monto"])
+        c.font = FONT_CLI_NORMAL
+        c.number_format = FMT_CURRENCY
+        c.alignment = ALIGN_RIGHT
+        for col in range(1, 4):
+            ws3.cell(row=r, column=col).border = BORDER_THIN
+        total_inc += f["monto"]
+        r += 1
+
+    # Subtotal ingresos
+    ws3.cell(row=r, column=1).border = BORDER_THIN
+    ws3.cell(row=r, column=2, value="Total ingresos").font = FONT_CLI_BOLD
+    c = ws3.cell(row=r, column=3, value=total_inc)
+    c.font = FONT_CLI_BOLD
+    c.number_format = FMT_CURRENCY
+    c.alignment = ALIGN_RIGHT
+    c.fill = PatternFill("solid", start_color="E2EFDA")
+    for col in range(1, 4):
+        ws3.cell(row=r, column=col).border = BORDER_THIN
+    r += 2
+
+    # Sección gastos
+    c_sec2 = ws3.cell(row=r, column=1, value="📥 GASTOS (con factura)")
+    c_sec2.font = FONT_CLI_BOLD
+    ws3.merge_cells(start_row=r, start_column=1, end_row=r, end_column=3)
+    r += 1
+
+    total_exp = 0.0
+    for f in facturas_gastos:
+        fecha_str = f["fecha"].strftime("%d/%m/%Y") if f["fecha"] else ""
+        ws3.cell(row=r, column=1, value=fecha_str).font = FONT_CLI_NORMAL
+        ws3.cell(row=r, column=2, value=f["quien"]).font = FONT_CLI_NORMAL
+        c = ws3.cell(row=r, column=3, value=f["monto"])
+        c.font = FONT_CLI_NORMAL
+        c.number_format = FMT_CURRENCY
+        c.alignment = ALIGN_RIGHT
+        for col in range(1, 4):
+            ws3.cell(row=r, column=col).border = BORDER_THIN
+        total_exp += f["monto"]
+        r += 1
+
+    # Subtotal gastos
+    ws3.cell(row=r, column=1).border = BORDER_THIN
+    ws3.cell(row=r, column=2, value="Total gastos").font = FONT_CLI_BOLD
+    c = ws3.cell(row=r, column=3, value=total_exp)
+    c.font = FONT_CLI_BOLD
+    c.number_format = FMT_CURRENCY
+    c.alignment = ALIGN_RIGHT
+    c.fill = PatternFill("solid", start_color="FCE4D6")
+    for col in range(1, 4):
+        ws3.cell(row=r, column=col).border = BORDER_THIN
+    r += 2
+
+    # Total final
+    ws3.cell(row=r, column=1).border = BORDER_THIN
+    ws3.cell(row=r, column=2, value=f"TOTAL DEL MES ({periodo})").font = Font(name="Arial", bold=True, size=12)
+    c = ws3.cell(row=r, column=3, value=total_inc)
+    c.font = Font(name="Arial", bold=True, size=12)
+    c.number_format = FMT_CURRENCY
+    c.alignment = ALIGN_RIGHT
+    c.fill = PatternFill("solid", start_color="D9E1F2")
+    for col in range(1, 4):
+        ws3.cell(row=r, column=col).border = BORDER_THIN
+
+    wb.save(path)
+    log.info(f"  Excel cliente guardado: {path}")
+    return path
+
+
+# ===========================================================================
 # Funcion principal — generate_excel
 # ===========================================================================
 
