@@ -4,21 +4,12 @@ run.py — Entry point unico para el flujo completo
 =================================================
   descarga CFDIs → separa ingresos/gastos → parsea XMLs → genera Excel
 
-Uso:
+Uso CLI:
   python run.py --rfc SARR9110035Q3 --cer cert.cer --key key.key --mes 2026-06
 
-  python run.py --rfc SARR9110035Q3 --cer cert.cer --key key.key \\
-                --mes 2026-06 --despacho "Despacho Contable"
-
-Opciones:
-  --rfc        RFC del contribuyente (requerido)
-  --cer        Ruta al archivo .cer de la FIEL (requerido)
-  --key        Ruta al archivo .key de la FIEL (requerido)
-  --password   Contrasena de la FIEL (si se omite, se pide interactivamente)
-  --mes        Mes a procesar en formato YYYY-MM (requerido)
-  --despacho   Nombre del despacho contable (default: 'Despacho Contable')
-  --output     Carpeta base de salida (default: ./results_{RFC})
-  --intervalo  Segundos entre verificaciones al SAT (default: 60)
+Uso programatico (desde clients.py):
+  from run import ejecutar_flujo
+  excel = ejecutar_flujo(rfc="SARR9110035Q3", cer=Path("cert.cer"), ...)
 """
 
 import sys
@@ -43,8 +34,163 @@ from descarga_masiva import (
 from excel_generator import generate_excel_from_xml
 
 
+# ===========================================================================
+# Funcion reusable — ejecutar_flujo
+# ===========================================================================
+
+def ejecutar_flujo(
+    rfc: str,
+    cer: Path,
+    key: Path,
+    password: str,
+    mes: str,
+    despacho: str = "Despacho Contable",
+    output: Path | None = None,
+    intervalo: int = 60,
+) -> Path:
+    """
+    Flujo completo para un RFC y mes:
+      1. Descarga CFDIs emitidos y recibidos del SAT
+      2. Organiza XMLs en ingresos/ y gastos/
+      3. Genera Excel de Papel de Trabajo
+
+    Parametros:
+      rfc       : RFC del contribuyente
+      cer       : ruta al archivo .cer de la FIEL
+      key       : ruta al archivo .key de la FIEL
+      password  : contrasena de la FIEL
+      mes       : mes a procesar en formato YYYY-MM
+      despacho  : nombre del despacho contable
+      output    : carpeta base de salida (default: ./results_{RFC})
+      intervalo : segundos entre verificaciones al SAT
+
+    Retorna:
+      Ruta (Path) al archivo Excel generado.
+    """
+    inicio_proceso = datetime.now()
+
+    # Validar FIEL
+    if not cer.exists():
+        raise FileNotFoundError(f"Archivo .cer no encontrado: {cer}")
+    if not key.exists():
+        raise FileNotFoundError(f"Archivo .key no encontrado: {key}")
+
+    _validar_salt()
+
+    # Parsear mes
+    try:
+        year, month = map(int, mes.split("-"))
+    except ValueError:
+        raise ValueError(f"--mes debe tener formato YYYY-MM (ej. 2026-06), recibido: {mes}")
+
+    inicio = date(year, month, 1)
+    last_day = monthrange(year, month)[1]
+    fin = min(date(year, month, last_day), date.today())
+
+    base_dir = output if output else Path(f"./results_{rfc}")
+    descarga_dir = base_dir / "cfdi_download"
+
+    log.info("=" * 65)
+    log.info(f"FLUJO COMPLETO — {rfc} | {mes}")
+    log.info(f"Inicio: {inicio_proceso.strftime('%Y-%m-%d %H:%M:%S')}")
+    log.info("=" * 65)
+    log.info(f"  RFC     : {rfc}")
+    log.info(f"  Mes     : {mes} ({inicio} → {fin})")
+    log.info(f"  Salida  : {base_dir.resolve()}")
+    log.info("")
+
+    # -------------------------------------------------------------------
+    # PASO 1: Cargar FIEL y autenticar
+    # -------------------------------------------------------------------
+    log.info("PASO 1: Cargando FIEL...")
+    fiel = cargar_fiel(cer, key, password)
+
+    # -------------------------------------------------------------------
+    # PASO 2: Descargar CFDIs (emitidos y recibidos)
+    # -------------------------------------------------------------------
+    log.info("")
+    log.info("PASO 2: Descargando CFDIs del SAT...")
+    log.info("-" * 50)
+
+    xmls_emitidos = descargar_cfdi(
+        fiel, rfc, inicio, fin, "emitidos", descarga_dir, intervalo,
+    )
+
+    xmls_recibidos = descargar_cfdi(
+        fiel, rfc, inicio, fin, "recibidos", descarga_dir, intervalo,
+    )
+
+    todos_xmls = xmls_emitidos + xmls_recibidos
+    log.info(f"  Total XMLs descargados: {len(todos_xmls)} "
+             f"({len(xmls_emitidos)} emitidos, {len(xmls_recibidos)} recibidos)")
+
+    if not todos_xmls:
+        log.warning("✗ No se descargaron XMLs. Verifica que el periodo tenga actividad.")
+        return None
+
+    # -------------------------------------------------------------------
+    # PASO 3: Organizar XMLs en ingresos/ y gastos/
+    # -------------------------------------------------------------------
+    log.info("")
+    log.info("PASO 3: Organizando XMLs por tipo...")
+    log.info("-" * 50)
+
+    ingresos_dir, gastos_dir = _organizar_xmls_para_excel(
+        todos_xmls, rfc, base_dir, mes
+    )
+
+    # -------------------------------------------------------------------
+    # PASO 4: Generar Excel
+    # -------------------------------------------------------------------
+    log.info("")
+    log.info("PASO 4: Generando Excel de Papel de Trabajo...")
+    log.info("-" * 50)
+
+    excel_path = generate_excel_from_xml(
+        rfc=rfc,
+        start_date=inicio,
+        end_date=fin,
+        xml_income_dir=ingresos_dir,
+        xml_expense_dir=gastos_dir,
+        output_dir=base_dir,
+        isr_table=TABLA_ISR_RESICO_DEFAULT,
+        despacho=despacho,
+    )
+
+    # Limpiar carpeta temporal
+    if descarga_dir.exists():
+        shutil.rmtree(descarga_dir)
+        log.info(f"  Carpeta temporal eliminada: {descarga_dir}")
+
+    # -------------------------------------------------------------------
+    # Resumen final
+    # -------------------------------------------------------------------
+    duracion = int((datetime.now() - inicio_proceso).total_seconds())
+
+    log.info("")
+    log.info("=" * 65)
+    log.info(f"FLUJO COMPLETO — FINALIZADO — {rfc}")
+    log.info("=" * 65)
+    log.info(f"  RFC               : {rfc}")
+    log.info(f"  Mes               : {mes}")
+    log.info(f"  XMLs procesados   : {len(todos_xmls)}")
+    log.info(f"  Ingresos          : {ingresos_dir.resolve()}")
+    log.info(f"  Gastos            : {gastos_dir.resolve()}")
+    log.info(f"  Duración total    : {duracion // 60}m {duracion % 60}s")
+    log.info("")
+    log.info(f"  📊 Excel generado : {excel_path.resolve()}")
+    log.info("=" * 65)
+
+    print(f"\n✅ Excel: {excel_path.resolve()}")
+    return excel_path
+
+
+# ===========================================================================
+# CLI entry point
+# ===========================================================================
+
 def parse_args() -> dict:
-    """Parsea argumentos de linea de comandos o los pide interactivamente."""
+    """Parsea argumentos de linea de comandos."""
     import argparse
 
     p = argparse.ArgumentParser(
@@ -75,20 +221,12 @@ def parse_args() -> dict:
 
     output = args.output if args.output else Path(f"./results_{rfc}")
 
-    # Calcular inicio y fin del mes
-    # El SAT no acepta fechas futuras: si el mes es el actual, usar hoy como fin
-    inicio = date(year, month, 1)
-    last_day = monthrange(year, month)[1]
-    fin = min(date(year, month, last_day), date.today())
-
     return {
         "rfc":       rfc,
         "cer":       args.cer,
         "key":       args.key,
         "password":  password,
         "mes":       args.mes,
-        "inicio":    inicio,
-        "fin":       fin,
         "despacho":  args.despacho,
         "output":    output,
         "intervalo": args.intervalo,
@@ -96,121 +234,17 @@ def parse_args() -> dict:
 
 
 def main() -> None:
-    inicio_proceso = datetime.now()
-
-    log.info("=" * 65)
-    log.info("FLUJO COMPLETO — DESCARGA CFDI + EXCEL")
-    log.info(f"Inicio: {inicio_proceso.strftime('%Y-%m-%d %H:%M:%S')}")
-    log.info("=" * 65)
-
     params = parse_args()
-
-    # Validar FIEL
-    if not params["cer"].exists():
-        log.error(f"✗ Archivo .cer no encontrado: {params['cer']}")
-        sys.exit(1)
-    if not params["key"].exists():
-        log.error(f"✗ Archivo .key no encontrado: {params['key']}")
-        sys.exit(1)
-
-    _validar_salt()
-
-    rfc        = params["rfc"]
-    mes_key    = params["mes"]
-    base_dir   = params["output"]
-    descarga_dir = base_dir / "cfdi_download"
-
-    log.info(f"  RFC     : {rfc}")
-    log.info(f"  Mes     : {mes_key} ({params['inicio']} → {params['fin']})")
-    log.info(f"  Salida  : {base_dir.resolve()}")
-    log.info("")
-
-    # -------------------------------------------------------------------
-    # PASO 1: Cargar FIEL y autenticar
-    # -------------------------------------------------------------------
-    log.info("PASO 1: Cargando FIEL...")
-    fiel = cargar_fiel(params["cer"], params["key"], params["password"])
-
-    # -------------------------------------------------------------------
-    # PASO 2: Descargar CFDIs (emitidos y recibidos)
-    # -------------------------------------------------------------------
-    log.info("")
-    log.info("PASO 2: Descargando CFDIs del SAT...")
-    log.info("-" * 50)
-
-    xmls_emitidos  = descargar_cfdi(
-        fiel, rfc, params["inicio"], params["fin"],
-        "emitidos", descarga_dir, params["intervalo"],
-    )
-
-    xmls_recibidos = descargar_cfdi(
-        fiel, rfc, params["inicio"], params["fin"],
-        "recibidos", descarga_dir, params["intervalo"],
-    )
-
-    todos_xmls = xmls_emitidos + xmls_recibidos
-    log.info(f"  Total XMLs descargados: {len(todos_xmls)} "
-             f"({len(xmls_emitidos)} emitidos, {len(xmls_recibidos)} recibidos)")
-
-    if not todos_xmls:
-        log.warning("✗ No se descargaron XMLs. Verifica que el periodo tenga actividad.")
-        sys.exit(0)
-
-    # -------------------------------------------------------------------
-    # PASO 3: Organizar XMLs en ingresos/ y gastos/
-    # -------------------------------------------------------------------
-    log.info("")
-    log.info("PASO 3: Organizando XMLs por tipo...")
-    log.info("-" * 50)
-
-    ingresos_dir, gastos_dir = _organizar_xmls_para_excel(
-        todos_xmls, rfc, base_dir, mes_key
-    )
-
-    # -------------------------------------------------------------------
-    # PASO 4: Generar Excel
-    # -------------------------------------------------------------------
-    log.info("")
-    log.info("PASO 4: Generando Excel de Papel de Trabajo...")
-    log.info("-" * 50)
-
-    excel_path = generate_excel_from_xml(
-        rfc=rfc,
-        start_date=params["inicio"],
-        end_date=params["fin"],
-        xml_income_dir=ingresos_dir,
-        xml_expense_dir=gastos_dir,
-        output_dir=base_dir,
-        isr_table=TABLA_ISR_RESICO_DEFAULT,
+    ejecutar_flujo(
+        rfc=params["rfc"],
+        cer=params["cer"],
+        key=params["key"],
+        password=params["password"],
+        mes=params["mes"],
         despacho=params["despacho"],
+        output=params["output"],
+        intervalo=params["intervalo"],
     )
-
-    # Limpiar carpeta temporal de descarga (opcional — se conservan los XMLs organizados)
-    if descarga_dir.exists():
-        shutil.rmtree(descarga_dir)
-        log.info(f"  Carpeta temporal eliminada: {descarga_dir}")
-
-    # -------------------------------------------------------------------
-    # Resumen final
-    # -------------------------------------------------------------------
-    duracion = int((datetime.now() - inicio_proceso).total_seconds())
-
-    log.info("")
-    log.info("=" * 65)
-    log.info("FLUJO COMPLETO — FINALIZADO")
-    log.info("=" * 65)
-    log.info(f"  RFC               : {rfc}")
-    log.info(f"  Mes               : {mes_key}")
-    log.info(f"  XMLs procesados   : {len(todos_xmls)}")
-    log.info(f"  Ingresos          : {ingresos_dir.resolve()}")
-    log.info(f"  Gastos            : {gastos_dir.resolve()}")
-    log.info(f"  Duración total    : {duracion // 60}m {duracion % 60}s")
-    log.info("")
-    log.info(f"  📊 Excel generado : {excel_path.resolve()}")
-    log.info("=" * 65)
-
-    # Imprimir ruta del Excel como ultima linea para consumo programatico
-    print(f"\n✅ Excel: {excel_path.resolve()}")
 
 
 if __name__ == "__main__":
