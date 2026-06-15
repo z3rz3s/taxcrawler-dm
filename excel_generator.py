@@ -191,28 +191,53 @@ def _build_month_calcs(income_recs: list[dict], expense_recs: list[dict],
     """
     Calcula IVA e ISR para un mes dado.
 
-    Si se proporcionan xml_income / xml_expense (registros de xml_parser),
-    los valores de IVA e ISR se toman directamente del CFDI.
-    Si no, se estiman a 16% del total (fallback para modo solo Metadata).
+    El IVA trasladado, IVA acreditable e ISR retenido deben leerse
+    directamente de los XMLs CFDI parseados — nunca se estiman.
+    Si no se proporcionan xml_income/xml_expense, los valores fiscales
+    quedan en 0.0 y se registra una advertencia.
+
+    Se excluyen complementos de pago (Tipo P) de las sumas de IVA/ISR:
+    su IVA ya está registrado en la factura original (Tipo I) y
+    contarlos de nuevo duplicaría el monto.
+
+    El ISR por pagar se calcula con la tabla Art. 113-E (RESICO PF):
+      ISR = cuota_fija + (ingreso - limite_inferior) * tasa
+      ISR por pagar = max(0, ISR_calculado - ISR_retenido)
     """
     total_ingresos = sum(r["monto"] for r in income_recs)
     total_gastos   = sum(r["monto"] for r in expense_recs)
 
+    # IVA trasladado e ISR retenido — exclusivamente desde XML
+    # Se excluyen complementos de pago (Tipo P): su IVA ya está en la factura original
     if xml_income is not None:
-        iva_trasladado = sum(r["iva_16"]  for r in xml_income)
-        isr_retenido   = sum(r["isr_ret"] for r in xml_income)
+        iva_trasladado = sum(r["iva_16"]  for r in xml_income if r["tipo"] != "P")
+        isr_retenido   = sum(r["isr_ret"] for r in xml_income if r["tipo"] != "P")
+        pagos_inc = [r for r in xml_income if r["tipo"] == "P"]
+        if pagos_inc:
+            log.info(f"    {len(pagos_inc)} complemento(s) de pago en ingresos — excluidos del IVA/ISR")
     else:
-        iva_trasladado = total_ingresos * 0.16
+        log.warning("    ! Sin XMLs de ingresos — IVA trasladado e ISR retenido = 0.0")
+        log.warning("      Proporciona la carpeta de CFDIs con --xml-dir para valores reales.")
+        iva_trasladado = 0.0
         isr_retenido   = 0.0
 
+    # IVA acreditable — exclusivamente desde XML
+    # Se excluyen complementos de pago (Tipo P): su IVA ya está en la factura original
     if xml_expense is not None:
-        iva_acreditable = sum(r["iva_16"] for r in xml_expense)
+        iva_acreditable = sum(r["iva_16"] for r in xml_expense if r["tipo"] != "P")
+        pagos_exp = [r for r in xml_expense if r["tipo"] == "P"]
+        if pagos_exp:
+            log.info(f"    {len(pagos_exp)} complemento(s) de pago en gastos — excluidos del IVA acreditable")
     else:
-        iva_acreditable = total_gastos * 0.16
+        log.warning("    ! Sin XMLs de gastos — IVA acreditable = 0.0")
+        log.warning("      Proporciona la carpeta de CFDIs con --xml-dir para valores reales.")
+        iva_acreditable = 0.0
 
     iva_saldo     = iva_trasladado - iva_acreditable
     isr_data      = _lookup_isr(total_ingresos, isr_table)
-    isr_por_pagar = max(0.0, total_ingresos * 0.025 - isr_retenido)
+    isr_calculado = isr_data["isr_calculado"]
+    # Art. 113-E: las retenciones de ISR reducen el impuesto a pagar
+    isr_por_pagar = max(0.0, isr_calculado - isr_retenido)
 
     return {
         "total_ingresos":  total_ingresos,
@@ -221,7 +246,7 @@ def _build_month_calcs(income_recs: list[dict], expense_recs: list[dict],
         "iva_acreditable": iva_acreditable,
         "iva_saldo":       iva_saldo,
         "isr_retenido":    isr_retenido,
-        "isr_calculado":   isr_data["isr_calculado"],
+        "isr_calculado":   isr_calculado,
         "isr_por_pagar":   isr_por_pagar,
         "isr_data":        isr_data,
     }
@@ -518,8 +543,8 @@ def _write_papel(ws, rfc: str, client_name: str, despacho: str,
                         mc["total_ingresos"], fmt=FMT_CURRENCY)
         current_row += 1
 
-        _labeled_value(ws, current_row, 2, "TASA APLICABLE (2.5%)", 5,
-                        mc["total_ingresos"] * 0.025, fmt=FMT_CURRENCY)
+        _labeled_value(ws, current_row, 2, f"TASA APLICABLE ({mc['isr_data']['tasa']:.1%})", 5,
+                        mc["isr_data"]["isr_calculado"], fmt=FMT_CURRENCY)
         current_row += 1
 
         _labeled_value(ws, current_row, 2, "ISR RETENIDO", 5,
@@ -672,6 +697,8 @@ def generate_excel(
     regimen: str = "resico",
     acumulado_anual: bool = False,
     excel_mode: str = "completo",
+    xml_income_dir: Path | None = None,
+    xml_expense_dir: Path | None = None,
 ) -> Path:
     """
     Genera el Excel de Papel de Trabajo con exactamente 6 hojas fijas.
@@ -688,6 +715,8 @@ def generate_excel(
       regimen        : 'resico' (implementado) | 'pfae' (TODO)
       acumulado_anual: reservado para Opcion B — actualmente no usado
       excel_mode     : reservado para modos futuros — actualmente genera completo
+      xml_income_dir : carpeta con XMLs CFDI de ingresos parseados por xml_parser
+      xml_expense_dir: carpeta con XMLs CFDI de gastos parseados por xml_parser
 
     Retorna la ruta al archivo Excel generado.
     """
@@ -712,6 +741,27 @@ def generate_excel(
     grouped_gastos   = group_records_by_month(expense_files, rfc, "gastos")
     grouped_pagos    = group_records_by_month(expense_files, rfc, "pagos")
 
+    # Parsear XMLs CFDI si se proporcionaron — los valores de IVA/ISR
+    # se leen directamente de los comprobantes, sin estimaciones
+    xml_income_by_month: dict[str, list[dict]] = {}
+    xml_expense_by_month: dict[str, list[dict]] = {}
+
+    if xml_income_dir and xml_income_dir.exists():
+        log.info(f"  Parseando XMLs de ingresos: {xml_income_dir}")
+        xml_income_all = parsear_directorio(xml_income_dir)
+        xml_income_by_month = agrupar_por_mes(xml_income_all)
+        log.info(f"    {len(xml_income_all)} XMLs de ingresos parseados")
+
+    if xml_expense_dir and xml_expense_dir.exists():
+        log.info(f"  Parseando XMLs de gastos: {xml_expense_dir}")
+        xml_expense_all = parsear_directorio(xml_expense_dir)
+        xml_expense_by_month = agrupar_por_mes(xml_expense_all)
+        log.info(f"    {len(xml_expense_all)} XMLs de gastos parseados")
+
+    if not xml_income_dir or not xml_expense_dir:
+        log.warning("  ! Sin carpetas de XMLs CFDI — IVA e ISR quedaran en 0.")
+        log.warning("    Usa --xml-ingresos y --xml-gastos para valores fiscales reales.")
+
     # Calculos por mes en orden cronologico
     periods    = generate_monthly_periods(start_date, end_date)
     month_calcs: list[dict] = []
@@ -721,9 +771,15 @@ def generate_excel(
         month_num = month_start.strftime("%m")
         month_lbl = f"{MESES_ES[month_num]} {month_start.year}"
 
-        income_recs  = grouped_ingresos.get(month_key, [])
-        expense_recs = grouped_gastos.get(month_key, [])
-        calcs        = _build_month_calcs(income_recs, expense_recs, isr_table)
+        income_recs   = grouped_ingresos.get(month_key, [])
+        expense_recs  = grouped_gastos.get(month_key, [])
+        xml_inc_month = xml_income_by_month.get(month_key, [])
+        xml_exp_month = xml_expense_by_month.get(month_key, [])
+        calcs         = _build_month_calcs(
+            income_recs, expense_recs, isr_table,
+            xml_income=xml_inc_month if xml_inc_month else None,
+            xml_expense=xml_exp_month if xml_exp_month else None,
+        )
         calcs["label"]     = month_lbl
         calcs["month_key"] = month_key
         month_calcs.append(calcs)
