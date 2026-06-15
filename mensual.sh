@@ -33,9 +33,9 @@ mkdir -p "$LOG_DIR" "$REPORTES_DIR"
     echo "--- Copiando Excels a reportes/ ---"
     echo ""
 
-    # Buscar y copiar Excels generados
+    # Buscar y copiar Excels generados (técnico y cliente)
     COPIADOS=0
-    for excel in results_*/*_${MES}.xlsx; do
+    for excel in results_*/*_${MES}.xlsx results_*/*_${MES}_cliente.xlsx; do
         [ -f "$excel" ] || continue
         RFC=$(basename "$(dirname "$excel")" | sed 's/results_//')
         DEST="$REPORTES_DIR/$RFC/$MES"
@@ -45,13 +45,25 @@ mkdir -p "$LOG_DIR" "$REPORTES_DIR"
         COPIADOS=$((COPIADOS + 1))
     done
 
-    if [ $COPIADOS -eq 0 ]; then
-        echo "  ⚠️  No se encontraron Excels para copiar."
+    # Buscar y copiar PDFs de documentos SAT (CSF, Opinión)
+    DOCS_COPIADOS=0
+    for pdf in results_*/documentos_sat/*.pdf; do
+        [ -f "$pdf" ] || continue
+        RFC=$(basename "$(dirname "$(dirname "$pdf")")" | sed 's/results_//')
+        DEST="$REPORTES_DIR/$RFC/$MES"
+        mkdir -p "$DEST"
+        cp "$pdf" "$DEST/"
+        echo "  📄 $RFC → $DEST/$(basename "$pdf")"
+        DOCS_COPIADOS=$((DOCS_COPIADOS + 1))
+    done
+
+    if [ $COPIADOS -eq 0 ] && [ $DOCS_COPIADOS -eq 0 ]; then
+        echo "  ⚠️  No se encontraron Excels ni PDFs para copiar."
     fi
 
     echo ""
     echo "=============================================="
-    echo "FIN: $(date '+%Y-%m-%d %H:%M:%S') — exit=$EXIT, excels=$COPIADOS"
+    echo "FIN: $(date '+%Y-%m-%d %H:%M:%S') — exit=$EXIT, excels=$COPIADOS, docs=$DOCS_COPIADOS"
     echo "=============================================="
 } >> "$LOG_FILE" 2>&1
 

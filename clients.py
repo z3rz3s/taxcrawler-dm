@@ -28,6 +28,7 @@ if _libs_abs.exists() and str(_libs_abs) not in sys.path:
     sys.path.insert(0, str(_libs_abs))
 
 from config import log
+from sat_documentos import descargar_documentos_sat
 
 CLIENTS_FILE = Path(__file__).resolve().parent / "clients.json.enc"
 
@@ -195,11 +196,57 @@ def eliminar_cliente(rfc: str) -> bool:
 # Ejecucion — un cliente o todos
 # ===========================================================================
 
+def descargar_docs_cliente(rfc: str) -> dict | None:
+    """
+    Descarga documentos SAT (CSF + Opinión 32-D) para un cliente.
+    """
+    cliente = obtener_cliente(rfc)
+    if not cliente:
+        log.error(f"❌ Cliente {rfc} no registrado.")
+        return None
+
+    log.info(f"📄 Descargando documentos SAT para {rfc} — {cliente['nombre']}")
+    base_dir = Path(f"results_{rfc}/documentos_sat")
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        resultado = descargar_documentos_sat(
+            rfc=rfc.upper(),
+            cer_path=cliente["cer"],
+            key_path=cliente["key"],
+            password=cliente["password"],
+            output_dir=base_dir,
+        )
+        resultado["nombre"] = cliente["nombre"]
+        return resultado
+    except Exception as e:
+        log.error(f"❌ Error descargando docs para {rfc}: {e}")
+        return None
+
+
+def descargar_docs_todos() -> dict[str, dict]:
+    """Descarga documentos SAT para todos los clientes registrados."""
+    clientes = _leer_clientes()
+    clist = clientes.get("clients", {})
+    if not clist:
+        log.warning("No hay clientes registrados.")
+        return {}
+
+    resultados = {}
+    total = len(clist)
+    for i, (rfc, c) in enumerate(sorted(clist.items()), 1):
+        log.info(f"[{i}/{total}] Documentos: {rfc} — {c['nombre']}")
+        resultados[rfc] = descargar_docs_cliente(rfc) or {"error": "falló"}
+
+    return resultados
+
+
 def correr_cliente(
     rfc: str,
     mes: str,
     despacho: str = "Despacho Contable",
     intervalo: int = 60,
+    descargar_docs: bool = True,
 ) -> Path | None:
     """
     Ejecuta el flujo completo (descarga + Excel) para un cliente.
@@ -221,6 +268,12 @@ def correr_cliente(
 
     log.info(f"🚀 Iniciando flujo para {rfc} — {cliente['nombre']} ({mes})")
 
+    # ── Paso 0: Descargar documentos SAT ──
+    if descargar_docs:
+        log.info("")
+        log.info("PASO 0: Descargando documentos SAT (CSF + Opinión 32-D)...")
+        descargar_docs_cliente(rfc)
+
     try:
         excel = ejecutar_flujo(
             rfc=rfc.upper(),
@@ -241,6 +294,7 @@ def correr_todos(
     mes: str,
     despacho: str = "Despacho Contable",
     intervalo: int = 60,
+    descargar_docs: bool = True,
 ) -> dict[str, dict]:
     """
     Ejecuta el flujo completo para TODOS los clientes registrados.
@@ -267,7 +321,7 @@ def correr_todos(
         log.info("=" * 65)
 
         try:
-            excel = correr_cliente(rfc, mes, despacho, intervalo)
+            excel = correr_cliente(rfc, mes, despacho, intervalo, descargar_docs)
             if excel:
                 resultados[rfc] = {"status": "ok", "excel": str(excel.resolve())}
                 exitos += 1
@@ -337,9 +391,10 @@ def _cmd_run(args: list[str]) -> None:
     p.add_argument("--mes", required=True)
     p.add_argument("--despacho", default="Despacho Contable")
     p.add_argument("--intervalo", type=int, default=60)
+    p.add_argument("--no-docs", action="store_true", help="Saltar descarga de documentos SAT")
     parsed = p.parse_args(args)
 
-    correr_cliente(parsed.rfc.upper(), parsed.mes, parsed.despacho, parsed.intervalo)
+    correr_cliente(parsed.rfc.upper(), parsed.mes, parsed.despacho, parsed.intervalo, descargar_docs=not parsed.no_docs)
 
 
 def _cmd_run_all(args: list[str]) -> None:
@@ -349,14 +404,40 @@ def _cmd_run_all(args: list[str]) -> None:
     p.add_argument("--mes", required=True)
     p.add_argument("--despacho", default="Despacho Contable")
     p.add_argument("--intervalo", type=int, default=60)
+    p.add_argument("--no-docs", action="store_true", help="Saltar descarga de documentos SAT")
     parsed = p.parse_args(args)
 
-    correr_todos(parsed.mes, parsed.despacho, parsed.intervalo)
+    correr_todos(parsed.mes, parsed.despacho, parsed.intervalo, descargar_docs=not parsed.no_docs)
 
 
 def _cmd_list() -> None:
     """Comando list: muestra todos los clientes."""
     listar_clientes()
+
+
+def _cmd_docs(args: list[str]) -> None:
+    """Comando docs: descarga documentos SAT para un cliente o todos."""
+    import argparse
+    p = argparse.ArgumentParser(prog="clients.py docs")
+    p.add_argument("--rfc", default=None, help="RFC del cliente (si se omite, todos)")
+    parsed = p.parse_args(args)
+
+    if parsed.rfc:
+        resultado = descargar_docs_cliente(parsed.rfc.upper())
+        if resultado:
+            csf = resultado.get("constancia_fiscal")
+            op = resultado.get("opinion_cumplimiento")
+            errs = resultado.get("errores", [])
+            print(f"\n📄 {parsed.rfc.upper()}")
+            print(f"  CSF     : {csf or '❌'}")
+            print(f"  Opinión : {op or '❌'}")
+            if errs:
+                for e in errs:
+                    print(f"  ⚠ {e}")
+    else:
+        resultados = descargar_docs_todos()
+        ok = sum(1 for r in resultados.values() if r and r.get("constancia_fiscal"))
+        print(f"\n✅ {ok}/{len(resultados)} clientes con CSF descargado")
 
 
 def _cmd_delete(args: list[str]) -> None:
@@ -375,7 +456,7 @@ def _cmd_delete(args: list[str]) -> None:
 def main() -> None:
     if len(sys.argv) < 2:
         print(__doc__)
-        print("\nComandos disponibles: add, list, run, run-all, delete")
+        print("\nComandos disponibles: add, list, run, run-all, delete, docs")
         sys.exit(0)
 
     comando = sys.argv[1].lower()
@@ -387,6 +468,7 @@ def main() -> None:
         "run":     lambda: _cmd_run(resto),
         "run-all": lambda: _cmd_run_all(resto),
         "delete":  lambda: _cmd_delete(resto),
+        "docs":    lambda: _cmd_docs(resto),
     }
 
     if comando not in comandos:
