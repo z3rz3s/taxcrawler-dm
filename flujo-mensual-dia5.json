@@ -1,0 +1,70 @@
+{
+  "id": "flujo-mensual-dia5",
+  "name": "📊 Flujo Mensual — Excel Automático (Día 5)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 5 * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-dia5",
+      "name": "Día 5 del mes 8AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "command": "cd /Users/rogeliosanchezdelrosal/taxcrawler-dm && ./mensual.sh",
+        "options": {
+          "timeout": 7200000
+        }
+      },
+      "id": "exec-mensual",
+      "name": "Ejecutar flujo mensual",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [640, 300]
+    }
+  ],
+  "connections": {
+    "Día 5 del mes 8AM": {
+      "main": [
+        [
+          {
+            "node": "Ejecutar flujo mensual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Mexico_City"
+  },
+  "staticData": null,
+  "tags": [
+    {"name": "HAR"},
+    {"name": "Excel"},
+    {"name": "Mensual"}
+  ],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "projectId": "xE0auphbZx4mTJwW"
+    }
+  ],
+  "pinData": {},
+  "versionId": null,
+  "triggerCount": 0,
+  "updatedAt": "2026-06-15T19:15:00.000Z"
+}
