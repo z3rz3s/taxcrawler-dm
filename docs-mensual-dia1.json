@@ -1,0 +1,70 @@
+{
+  "id": "docs-mensual-dia1",
+  "name": "📄 Documentos SAT — Día 1",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 1 * *"
+            }
+          ]
+        }
+      },
+      "id": "sched-docs-dia1",
+      "name": "Schedule Trigger — Día 1 7AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "command": "bash ~/taxcrawler-dm/mensual-docs.sh"
+      },
+      "id": "exec-docs",
+      "name": "Ejecutar mensual-docs.sh",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [500, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger — Día 1 7AM": {
+      "main": [
+        [
+          {
+            "node": "Ejecutar mensual-docs.sh",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "America/Mexico_City"
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "1.0",
+  "triggerCount": 0,
+  "updatedAt": "2026-06-15T14:45:00.000Z",
+  "createdAt": "2026-06-15T14:45:00.000Z",
+  "tags": [
+    {
+      "name": "taxcrawler"
+    },
+    {
+      "name": "documentos-sat"
+    }
+  ],
+  "shared": [
+    {
+      "role": "owner",
+      "projectId": "xE0auphbZx4mTJwW"
+    }
+  ]
+}
